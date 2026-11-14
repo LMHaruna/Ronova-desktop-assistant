@@ -2,7 +2,7 @@
 
 Ronova 是一个以若娜瓦为角色的 Windows 桌面助手，提供文字聊天、语音与 Live2D 视频通话，也可以用来整理桌面、标注截图和通过 Codex 处理项目。启动后，鼠标悬停在桌面头像上即可展开功能入口。点击头像可短暂查看 CPU、GPU、内存和桌面合成帧率。
 
-[下载 Windows 运行包](https://github.com/LMHaruna/ronova-ai-companion/releases) · [快速开始](#快速开始) · [维护与打包](#维护与打包)
+[下载 Windows 运行包](https://github.com/LMHaruna/Ronova-desktop-assistant/releases) · [快速开始](#快速开始) · [维护与打包](#维护与打包)
 
 ### 桌面入口
 
@@ -47,7 +47,7 @@ Ronova 是一个以若娜瓦为角色的 Windows 桌面助手，提供文字聊�
 
 ## 快速开始
 
-1. 在 64 位 Windows 上，从 [GitHub Releases](https://github.com/LMHaruna/ronova-ai-companion/releases) 的发布说明获取 Windows 运行包。新版运行包自带 **Windows x64 CPython 3.11.17**，无需另装 Python。GitHub 自动生成的 Source code 压缩包需要另行准备模型和运行依赖。
+1. 在 64 位 Windows 上，从 [GitHub Releases](https://github.com/LMHaruna/Ronova-desktop-assistant/releases) 的发布说明获取 Windows 运行包。新版运行包自带 **Windows x64 CPython 3.11.17**，无需另装 Python。GitHub 自动生成的 Source code 压缩包需要另行准备模型和运行依赖。
 2. 将单文件 ZIP 解压到要安装的目录，双击 `安装.cmd`。安装程序会用随包的 Python 和离线依赖创建 `runtime/voice-venv`，完成后双击 `Start-Client.cmd` 启动。也可直接双击 `Start-Client.cmd`，首次启动时会自动安装依赖。解压后建议在同一磁盘额外留出至少 7 GiB 安装依赖，并为缓存和修复留出空间。
 3. 打开「设置 → 大模型」，为陪伴聊天配置所选模型的 API Key。使用加班区时，另需本机可用的 Codex 客户端或 CLI，并在同一页登录 ChatGPT。
 
