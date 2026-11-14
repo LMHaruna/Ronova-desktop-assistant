@@ -138,7 +138,7 @@ def make_review(directory, report):
         for index,run in enumerate(backend['runs']):
             if 'source_wav' not in run:
                 cards.append('<section><h2>Qwen 请求未完成</h2><p>'+html.escape(run.get('error',''))+'</p></section>'); continue
-            name = 'GPT-SoVITS V2ProPlus / A' if backend['backend']=='gpt' else 'Qwen 3.1 / '+backend['voice']
+            name = 'Qwen 3.1 / ' + backend['voice']
             first = run['request_to_first_device_write_seconds']; gap = run['longest_software_gap_seconds']
             sound = run['request_to_estimated_first_sound_seconds']
             cards.append(f'<section><h2>{html.escape(name)} · 样本 {index+1}</h2><p>{html.escape(run["text"])}</p>'
@@ -147,6 +147,11 @@ def make_review(directory, report):
                          f'<audio controls src="{Path(run["playback_wav"]).name}"></audio>'
                          '<p>原始合成音频（保留模型停顿）</p>'
                          f'<audio controls src="{Path(run["source_wav"]).name}"></audio></section>')
-    page = '<!doctype html><meta charset="utf-8"><title>语音对照试听</title><style>body{max-width:900px;margin:36px auto;padding:0 20px;font:16px/1.7 system-ui;background:#15131a;color:#eee}section{padding:20px;margin:20px 0;background:#24212c;border-radius:12px}audio{width:100%}h2{font-size:20px}</style>'
-    page += '<h1>语音对照试听</h1><p>相同固定文字；GPT 已预热，Qwen 包含本次连接。首音提交为播放器写入估计，未经声卡回录。试听文件从首音频块开始，不包含请求等待。自然停顿与数据未及时到达造成的空档分别统计；音色请以试听判断。</p>' + ''.join(cards)
-    (directory/'review.html').write_text(page,encoding='utf-8')
+    font_url = (ROOT/'design/fonts/MiSansVF.ttf').as_uri()
+    page = ('<!doctype html><meta charset="utf-8"><title>语音对照试听</title><style>'
+            f'@font-face{{font-family:MiSans;src:url("{font_url}");font-weight:150 700}}'
+            'body{max-width:900px;margin:36px auto;padding:0 20px;font:330 16px/1.7 MiSans,system-ui;background:#15131a;color:#eee}'
+            'section{padding:20px;margin:20px 0;background:#24212c;border-radius:12px}'
+            'audio{width:100%}h1,h2{font-weight:inherit}h2{font-size:20px}</style>')
+    page += '<h1>语音对照试听</h1><p>首音提交时间包含 Qwen 连接，由播放器写入时间估计。试听文件从首音频块开始。自然停顿与数据未及时到达造成的空档分别统计。</p>' + ''.join(cards)
+    (directory/'review.html').write_text(page+'<footer>界面字体由小米 MiSans 提供</footer>',encoding='utf-8')

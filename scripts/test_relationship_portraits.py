@@ -19,7 +19,7 @@ from client_app import ClientWindow
 from client_scene import SceneAssets
 from client_controller import DesktopController
 from client_memory import MemoryStore
-from client_memory_panel import AffinityBar
+from client_affinity import AffinityBar
 from client_relationship import stage_for
 from client_fixtures import FakeCall, fake_router
 from test_companion import packet
@@ -322,7 +322,8 @@ class PortraitWindowTests(unittest.TestCase):
         for score in (-20,-1,0,30,100):
             meter.setValue(score); self.assertEqual(meter.value(),score)
         meter.setValue(-999); self.assertEqual(meter.value(),-20)
-        self.assertEqual(meter.grab().toImage().pixelColor(round(22*meter.devicePixelRatioF()),round(250*meter.devicePixelRatioF())).name(),'#a989b9')
+        from client_theme import COLORS
+        self.assertEqual(meter.grab().toImage().pixelColor(round(22*meter.devicePixelRatioF()),round(250*meter.devicePixelRatioF())).name(),COLORS['disabled'].lower())
         meter.setValue(999); self.assertEqual(meter.value(),100)
         meter.close()
         self.seed(-5)

@@ -1,13 +1,12 @@
 """Memory management embedded in the existing light phone settings."""
 from datetime import datetime
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QComboBox, QLineEdit, QPlainTextEdit,
     QScrollArea, QVBoxLayout, QWidget)
 from client_memory import CATEGORIES, STAGES
-from client_relationship import MIN_AFFINITY, MAX_AFFINITY
-from client_affinity import AffinityBar
+from client_fonts import emphasis_font
 from client_panels import AnimatedStack, SettingsRow, Switch, button, group, navigation, note
+from client_theme import themed
 
 SOURCES={'automatic':'自动识别','explicit':'明确记住','manual':'手动编辑','restored':'恢复旧版本'}
 REASONS={'baseline':'升级时保留的原记录','manual_add':'手动添加','manual_edit':'手动修改',
@@ -33,7 +32,7 @@ class MemoryPane(QWidget):
         self.stack=AnimatedStack(); outer.addWidget(self.stack,1)
         self.home=QWidget(); self.editor=QWidget(); self.stages=QWidget(); self.confirmation=QWidget(); self.history=QWidget()
         for page in (self.home,self.editor,self.stages,self.confirmation,self.history): self.stack.addWidget(page)
-        self.status_label=note(''); self.status_label.setFixedHeight(30)
+        self.status_label=note(''); self.status_label.setMinimumHeight(30)
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); outer.addWidget(self.status_label)
         layout,body=self.page(self.home,'记忆与关系',back)
         self.enabled=Switch(); self.enabled.setAccessibleName('使用长期记忆')
@@ -51,7 +50,7 @@ class MemoryPane(QWidget):
             SettingsRow('自动记忆',toggle=self.automatic),self.stage_row,affinity]))
         body.addWidget(self.reset_button)
         body.addWidget(note('成功回复后，当前模型会额外进行一次后台文字分析，自动更新记忆与关系。记忆存于本机，对话时提供给模型。'))
-        self.analysis_label=note(''); self.analysis_label.setFixedHeight(32); body.addWidget(self.analysis_label)
+        self.analysis_label=note(''); self.analysis_label.setMinimumHeight(32); body.addWidget(self.analysis_label)
         add=button('添加记忆',lambda:self.edit(None),'primaryButton'); body.addWidget(add)
         self.count_label=note(''); body.addWidget(self.count_label)
         self.list_body=QWidget(); self.list_layout=QVBoxLayout(self.list_body)
@@ -63,13 +62,20 @@ class MemoryPane(QWidget):
         layout,body=self.page(self.editor,'记忆',self.show_home)
         body.addWidget(note('分类'))
         self.category=QComboBox(); self.category.setAccessibleName('记忆分类')
+        self.category.view().setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         for key,label in CATEGORIES.items(): self.category.addItem(label,key)
-        self.category.setStyleSheet('QComboBox{background:white;color:#252B35;border:1px solid #E7EAF0;border-radius:10px;padding:9px;} QComboBox QAbstractItemView{background:white;color:#252B35;selection-background-color:#F4C7D2;}')
+        self.category.setStyleSheet(themed('''
+            QComboBox { background:$surface; color:$text; border:1px solid $border; border-radius:10px; padding:9px; }
+            QComboBox QAbstractItemView { background:$surface; color:$text; selection-background-color:$selection;
+                selection-color:$text; }
+        '''))
         body.addWidget(self.category); body.addWidget(note('记忆内容'))
         self.content=QPlainTextEdit(); self.content.setAccessibleName('记忆内容')
+        self.content.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.content.setPlaceholderText('例如：我喜欢喝热茶，不喜欢太甜。')
         self.content.setFixedHeight(134)
-        self.content.setStyleSheet('background:white;color:#252B35;border:1px solid #E7EAF0;border-radius:12px;padding:10px;')
+        self.content.setStyleSheet(themed('background:$surface;color:$text;border:1px solid $border;border-radius:12px;'
+                                          'padding:10px;placeholder-text-color:$muted;'))
         body.addWidget(self.content)
         self.length_label=note('0 / 300 字'); body.addWidget(self.length_label)
         self.source_label=plain_note(''); body.addWidget(self.source_label)
@@ -83,10 +89,13 @@ class MemoryPane(QWidget):
 
         layout,body=self.page(self.stages,'关系阶段',self.show_home)
         self.relationship_label=note(''); body.addWidget(self.relationship_label)
+        self.relationship_label.setFont(emphasis_font())
         body.addWidget(note('生气 −20～−1：好感度为负，称呼“凡人”。\n相识 0–29：克制、有距离，称呼以“你”为主。\n熟悉达到 30：更多调侃和具体关心，同样以“你”为主。\n亲密达到 70：明显偏爱，使用专属称呼。'))
         body.addWidget(note('关系自动变化。降档有缓冲，重复内容不加分，退出或沉默不扣分。各阶段共用长期记忆。'))
         body.addWidget(note('羁绊：满100开启誓约，完成后进入；已缔结者达到90保持或恢复，降分保留誓约。'))
-        self.oath_hint=plain_note('誓约入口位于主界面立绘右下方。好感度达到100后可开启。'); body.addWidget(self.oath_hint)
+        self.oath_location = ('誓约入口位于陪伴聊天输入框旁的“＋”菜单。' if getattr(main,'desktop',False)
+                              else '誓约入口位于主界面立绘右下方。')
+        self.oath_hint=plain_note(self.oath_location+'好感度达到100后可开启。'); body.addWidget(self.oath_hint)
         self.oath_reset=button('重置誓约',self.confirm_oath_reset,'secondaryButton'); body.addWidget(self.oath_reset)
         body.addWidget(note('亲密关系下的称呼'))
         self.close_name=QLineEdit(); self.close_name.setObjectName('modelInput'); self.close_name.setMaxLength(20)
@@ -116,6 +125,7 @@ class MemoryPane(QWidget):
         layout.addWidget(navigation('‹ 返回',title,back))
         scroll=QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         container=QWidget(); body=QVBoxLayout(container)
         body.setContentsMargins(14,10,14,18); body.setSpacing(12)
         scroll.setWidget(container); layout.addWidget(scroll,1)
@@ -248,7 +258,7 @@ class MemoryPane(QWidget):
             self.oath_reset.setEnabled(not self.pending and available)
             self.oath_hint.setText(('缔结于 '+date_text(profile['oath_completed_at']) if profile['oath_completed'] else
                 '好感度达到100后可开启' if profile['affinity']<100 else '好感度已满，可以缔结誓约')+
-                '\n誓约入口位于主界面立绘右下方。'+
+                '\n'+self.oath_location+
                 ('\n请结束当前通话、回复、播放或保存操作后再开始' if not available else ''))
         if not force and (not self.isVisible() or self.seen_revision==store.revision): return
         snapshot=store.snapshot(); self.seen_revision=snapshot['revision']

@@ -3,7 +3,7 @@ import json
 import queue
 import threading
 from chat_client import ChatClient, ChatCancelled
-from qwen_realtime import QwenRealtime
+from qwen_realtime import QwenRealtime, REALTIME_ENGINES
 from client_relationship import ANALYSIS_PROMPT, parse_analysis
 
 
@@ -11,7 +11,7 @@ class SemanticAnalyzer:
     def __init__(self, backend, config, client=None, lore=None):
         self.backend=backend
         self.lore=lore
-        self.client=client or (QwenRealtime(config=config,instructions=ANALYSIS_PROMPT) if backend=='qwen' else ChatClient(config=config))
+        self.client=client or (QwenRealtime(config=config,instructions=ANALYSIS_PROMPT) if backend in REALTIME_ENGINES else ChatClient(config=config))
         self.client.history=[{'role':'system','content':ANALYSIS_PROMPT}]
         self.client.context_provider=None
 
@@ -22,7 +22,7 @@ class SemanticAnalyzer:
             hints=self.lore.joke_hint(text)
             if hints: data['玩家调侃背景']=hints
         payload=json.dumps(data,ensure_ascii=False)
-        if self.backend=='qwen':
+        if self.backend in REALTIME_ENGINES:
             raw=self.client.reply(payload,cancel=cancel,audio_enabled=False)
         else: raw=self.client.reply(payload,cancel=cancel,max_tokens=1800)
         if cancel.is_set(): raise ChatCancelled('后台分析已取消')

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 import test_model_providers as fixtures
 from client_panels import AnimatedStack, PageTransition
+from client_theme import COLORS
 
 
 def settle(animation):
@@ -76,10 +77,10 @@ class TransitionFrames(unittest.TestCase):
                 transition.set_progress(.5)
                 covered=150 if direction>0 else 50
                 visible=50 if direction>0 else 150
-                self.assertEqual(sample(covered,180),QColor('#F5F6F8'))
+                self.assertEqual(sample(covered,180),QColor(COLORS['background']))
                 self.assertEqual(sample(visible,180),QColor('red'))
                 transition.set_progress(1)
-                self.assertEqual(sample(100,180),QColor('#F5F6F8'))
+                self.assertEqual(sample(100,180),QColor(COLORS['background']))
                 self.assertEqual(sample(35,35),QColor('green'))
                 transition.cancel()
         finally: transition.cancel(); host.close()

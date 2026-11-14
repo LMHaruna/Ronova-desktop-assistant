@@ -22,7 +22,7 @@ TEXT = '凡人，先把眼前的事做好。其他的，稍后再说。'
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python', type=Path)
-    parser.add_argument('--engine', choices=('gpt-sovitsv2proplus','indextts-2.5'),default='gpt-sovitsv2proplus')
+    parser.add_argument('--engine', choices=('indextts-2.5',),default='indextts-2.5')
     parser.add_argument('--audio-output',type=Path)
     parser.add_argument('--sentence-stream',action='store_true',help='Use the desktop sentence buffer and append queue.')
     parser.add_argument('--check-cancel',action='store_true')
@@ -44,7 +44,7 @@ def main():
     events = queue.Queue()
     jobs = []
     with args.output.with_suffix('.stderr.log').open('w', encoding='utf-8') as log:
-        worker='index_voice_worker.py' if args.engine=='indextts-2.5' else 'voice_worker.py'
+        worker='index_voice_worker.py'
         process = subprocess.Popen([str(python), '-s', '-u', str(ROOT / worker)], cwd=ROOT, env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, encoding='utf-8',
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -83,7 +83,7 @@ def main():
                 send('begin', job=job)
                 if args.sentence_stream:
                     from reply_pipeline import SentenceBuffer
-                    clauses=[]; buffer=SentenceBuffer(clauses.append)
+                    clauses=[]; buffer=SentenceBuffer.for_engine(clauses.append,args.engine)
                     buffer.feed(args.text); buffer.finish()
                 else: clauses=[args.text]
                 for clause in clauses: send('append', job=job, text=clause)

@@ -1,4 +1,4 @@
-"""Prepared GPT synthesis with immediate sentence playback and drained PCM tails."""
+"""Prepared IndexTTS synthesis with immediate sentence playback and drained PCM tails."""
 from collections import deque
 from pathlib import Path
 import json
@@ -15,29 +15,25 @@ from echo_control import PlaybackReference
 
 ROOT = Path(__file__).resolve().parent
 PYTHON = ROOT / "runtime/voice-venv/Scripts/python.exe"
-TTS_ENGINES = ('gpt-sovitsv2proplus', 'indextts-2.5')
+TTS_ENGINES = ('indextts-2.5',)
 
 
-def validate_resources(tts_engine='gpt-sovitsv2proplus'):
+def validate_resources(tts_engine='indextts-2.5'):
     if tts_engine not in TTS_ENGINES: raise ValueError('语音合成引擎无效')
     selection = json.loads((ROOT / "config/voice-selection.json").read_text(encoding="utf-8"))
-    reference_audio = ROOT / selection.get("reference_audio", "voice-reference/prepared/A.wav")
-    if tts_engine=='indextts-2.5':
-        package = ROOT / 'runtime/indextts-2.5'
-        paths = (PYTHON, ROOT/'index_voice_worker.py', reference_audio,
-                 ROOT/'index_voice_backend.py', package/'source/indextts/infer_v2_5.py',
-                 ROOT/'index_decode_graph.py',
-                 package/'models/config.yaml', package/'models/gpt.pth',
-                 package/'models/codec.pth', package/'models/s2mel.pth',
-                 package/'models/feat1.pt', package/'models/feat2.pt',
-                 package/'models/wav2vec2bert_stats.pt',
-                 package/'models/multilingual_zh_ja_yue_char_del.tiktoken',
-                 package/'models/hf_cache/campplus_cn_common.bin',
-                 package/'models/hf_cache/w2v-bert-2.0/model.safetensors',
-                 package/'models/hf_cache/bigvgan/bigvgan_generator.pt')
-    else:
-        paths = (PYTHON, ROOT / "voice_worker.py", reference_audio,
-                 ROOT / "runtime/gpt-sovits/GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth")
+    reference_audio = ROOT / selection.get("reference_audio", "voice-reference/prepared/asr-near-end.wav")
+    package = ROOT / 'runtime/indextts-2.5'
+    paths = (PYTHON, ROOT/'index_voice_worker.py', ROOT/'voice_worker.py', reference_audio,
+             ROOT/'index_voice_backend.py', package/'source/indextts/infer_v2_5.py',
+             ROOT/'index_decode_graph.py',
+             package/'models/config.yaml', package/'models/gpt.pth',
+             package/'models/codec.pth', package/'models/s2mel.pth',
+             package/'models/feat1.pt', package/'models/feat2.pt',
+             package/'models/wav2vec2bert_stats.pt',
+             package/'models/multilingual_zh_ja_yue_char_del.tiktoken',
+             package/'models/hf_cache/campplus_cn_common.bin',
+             package/'models/hf_cache/w2v-bert-2.0/model.safetensors',
+             package/'models/hf_cache/bigvgan/bigvgan_generator.pt')
     for path in paths:
         if not path.is_file():
             raise FileNotFoundError(f"{tts_engine} 缺少资源：{path.relative_to(ROOT)}")
@@ -56,11 +52,11 @@ class SpeechJob:
 
 
 class LocalVoice:
-    def __init__(self, status=None, on_fragment=None, player=None, tts_engine='gpt-sovitsv2proplus'):
+    def __init__(self, status=None, on_fragment=None, player=None, tts_engine='indextts-2.5'):
         validate_resources(tts_engine)
         self.tts_engine = tts_engine
         self.python = PYTHON
-        self.worker = ROOT/'index_voice_worker.py' if tts_engine=='indextts-2.5' else ROOT/'voice_worker.py'
+        self.worker = ROOT/'index_voice_worker.py'
         self.engine = "gpt"
         self.status = status or (lambda message: None)
         self.on_fragment = on_fragment
@@ -174,6 +170,7 @@ class LocalVoice:
                 continue
             kind = event.get("event")
             if kind == "ready":
+                self.prepare_error = None
                 self._ready_at = time.perf_counter()
                 self.prepare_metrics = {k: v for k, v in event.items() if k not in ("event", "job")}
                 self.prepare_metrics["ready_seconds"] = time.perf_counter() - self._prepare_started
@@ -197,6 +194,10 @@ class LocalVoice:
                     job.metrics["worker_done_received_seconds"] = time.perf_counter() - job.created
                 self._queue.put(event)
         if not self._closed:
+            if process is self._process:
+                self.ready.clear()
+                self.prepare_error = self.prepare_error or '本地语音进程已退出，请重新加载语音'
+                self.status(self.prepare_error+'；文字聊天可继续')
             with self._jobs_lock:
                 jobs = [job for job in self._jobs.values()
                         if getattr(job, "worker_process", process) is process]
@@ -341,6 +342,11 @@ class LocalVoice:
         with self._pcm_lock:
             if self._pcm:
                 self._pcm.stop()
+
+    @property
+    def prepared(self):
+        return (not self._closed and self.ready.is_set() and not self.prepare_error
+                and self._process is not None and self._process.poll() is None)
 
     @property
     def preparing(self):

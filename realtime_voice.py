@@ -51,9 +51,13 @@ class RealtimeVoice:
             return job
 
     def append_pcm(self, job, pcm, rate=24000):
+        if not job.input_closed:
+            self._queue_pcm(job, pcm, rate)
+
+    def _queue_pcm(self, job, pcm, rate=24000):
         if rate != 24000 or not isinstance(pcm, bytes) or not pcm or len(pcm) % 2:
             raise ValueError('Qwen output must be mono 24kHz 16-bit PCM')
-        if job.input_closed or job.finished.is_set() or job.cancelled.is_set(): return
+        if job.finished.is_set() or job.cancelled.is_set(): return
         job.metrics.setdefault('first_fragment_seconds', time.perf_counter() - job.created)
         if self.on_pcm: self.on_pcm(job, pcm, rate)
         # At most 3.2s queue plus 1.5s waveOut buffers; no per-chunk files.
@@ -74,8 +78,11 @@ class RealtimeVoice:
     def end(self, job):
         if not job.input_closed:
             job.input_closed = True
-            job.metrics['synthesis_complete_seconds'] = time.perf_counter() - job.created
-            self._put(job, None)
+            self._complete_input(job)
+
+    def _complete_input(self, job):
+        job.metrics['synthesis_complete_seconds'] = time.perf_counter() - job.created
+        self._put(job, None)
 
     def _play(self, job):
         player = None

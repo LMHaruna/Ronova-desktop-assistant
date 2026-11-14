@@ -1,15 +1,11 @@
-# 第三方语音组件许可与声明
+# 第三方组件许可与声明
 
-本文件对应随包的 GPT-SoVITS V2ProPlus 与 IndexTTS 组件。以下许可按各自组件适用，不是本项目原创客户端代码的统一许可证，也不替代其他依赖和素材各自的许可。
+以下许可按各自组件适用。
 
-## GPT-SoVITS V2ProPlus
+## MiSans
 
-- 项目来源：[RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)。
-- 官方 V2Pro / V2ProPlus 权重来源：[lj1995/GPT-SoVITS · v2Pro](https://huggingface.co/lj1995/GPT-SoVITS/tree/main/v2Pro)，模型仓库标注 MIT。
-- 随包项目代码采用 MIT License；原始版权声明为 Copyright (c) 2024 RVC-Boss。
-- 完整原文：[GPT-SoVITS-LICENSE.txt](licenses/GPT-SoVITS-LICENSE.txt)。原组件目录中的 `runtime/gpt-sovits/LICENSE` 同时保留。
-
-复制、修改或分发适用的代码及其主要部分时，须保留原版权声明和 MIT 许可全文。嵌套的第三方代码及其他辅助模型仍适用其各自许可，不因上述说明改为 MIT。
+- 桌面整理的图标名称及语音试听报告使用小米 MiSans 字体，字体文件采用小米发布的原版。
+- [小米官方下载](https://hyperos.mi.com/font/download) · [随包许可协议原文](licenses/MiSans-LICENSE.pdf)。
 
 ## IndexTTS
 

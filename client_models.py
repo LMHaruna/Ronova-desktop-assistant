@@ -5,12 +5,16 @@ from pathlib import Path
 import threading
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
-from chat_client import ChatConfig, CHAT_COMPLETION_URL, MODEL as CHAT_MODEL
+from chat_client import ChatConfig, CHAT_COMPLETION_URL, MAX_MODEL, MODEL as CHAT_MODEL
 from client_credentials import crypt, user_credentials_path, write_encrypted
-from qwen_realtime import RealtimeConfig, MODEL as QWEN_MODEL, environment
+from qwen_realtime import FLASH_MODEL, FLASH_URL, RealtimeConfig, MODEL as QWEN_MODEL, environment
+from qwen_tts_next import RONOVA_REFERENCE, TTS_NEXT, TTS_NEXT_URL, TTSNextConfig
+from qwen_voice_clone import valid_voice_id
 
 ROOT = Path(__file__).resolve().parent
-ENGINES = ('qwen', 'openai', 'deepseek', 'gpt')
+LEGACY_ENGINES = ('qwen', 'openai', 'deepseek', 'gpt')
+ENGINES = (*LEGACY_ENGINES, 'qwen_flash', 'qwen_max')
+VOICE_SETTINGS_ENGINES = ('deepseek', 'gpt', 'qwen_max')
 ENGINE_LABELS = {'qwen':'千问 3.1', 'openai':'ChatGPT', 'deepseek':'DeepSeek', 'gpt':'自定义模型'}
 
 
@@ -19,6 +23,7 @@ class ModelProfile:
     model: str
     url: str
     api_key: str = field(default='', repr=False)
+    voice: str = ''
 
     def validate(self):
         if not isinstance(self.model, str) or not self.model.strip() or len(self.model)>200 or any(c.isspace() for c in self.model):
@@ -27,12 +32,15 @@ class ModelProfile:
             raise ValueError('请填写有效的 URL 地址')
         if not isinstance(self.api_key, str) or len(self.api_key)>4096 or any(c.isspace() for c in self.api_key):
             raise ValueError('API Key 格式无效，请检查空格或换行')
+        if not isinstance(self.voice, str):
+            raise ValueError('音色 ID 格式无效')
         return self
 
 
 class ClientModels:
     def __init__(self, root=ROOT, credentials_path=None):
         root = Path(root)
+        self.reference = root/RONOVA_REFERENCE
         # Tests and isolated previews use their own temporary credentials file.
         self.path = Path(credentials_path) if credentials_path else (
             user_credentials_path() if root.resolve()==ROOT.resolve() else root/'config/client-models.bin')
@@ -43,7 +51,10 @@ class ClientModels:
         url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', ''))
         self.profiles = {
             'qwen': ModelProfile(QWEN_MODEL, url, environment('DASHSCOPE_API_KEY')),
+            'qwen_flash': ModelProfile(FLASH_MODEL, FLASH_URL, environment('DASHSCOPE_API_KEY')),
+            TTS_NEXT: ModelProfile(TTS_NEXT, TTS_NEXT_URL, environment('DASHSCOPE_API_KEY')),
             'gpt': ModelProfile(CHAT_MODEL, CHAT_COMPLETION_URL, environment('ALI_API_Key')),
+            'qwen_max': ModelProfile(MAX_MODEL, CHAT_COMPLETION_URL, environment('ALI_API_Key')),
             'openai': ModelProfile('gpt-6-sol', 'https://api.openai.com/v1/chat/completions', environment('OPENAI_API_KEY')),
             'deepseek': ModelProfile('deepseek-flash', 'https://api.deepseek.com/chat/completions', environment('DEEPSEEK_API_KEY'))}
         defaults = root/'config/client-models.json'
@@ -62,12 +73,13 @@ class ClientModels:
                 if not isinstance(value,dict) or value.get('version') not in (1,2): raise ValueError()
                 saved_profiles = value['profiles']
                 if not isinstance(saved_profiles,dict) or not {'qwen','gpt'} <= saved_profiles.keys(): raise ValueError()
-                if value['version']==2 and not set(ENGINES) <= saved_profiles.keys(): raise ValueError()
-                # V1 vaults contain two engines. Keep their customer credentials;
-                # new providers start empty, never borrowing a legacy key.
-                loaded = {name:(ModelProfile(**saved_profiles[name]).validate() if name in saved_profiles else profile)
+                if value['version']==2 and not set(LEGACY_ENGINES) <= saved_profiles.keys(): raise ValueError()
+                # Missing providers start with their presets and an empty key.
+                loaded = {name:(ModelProfile(**saved_profiles[name]) if name in saved_profiles else profile)
                           for name,profile in self.profiles.items()}
-                for name, profile in loaded.items(): self.config(name,profile).endpoint()
+                for name, profile in loaded.items():
+                    config = self.config(name, profile)
+                    if name != TTS_NEXT: config.endpoint()
                 self.profiles = loaded
             except (OSError,ValueError,RuntimeError,TypeError,KeyError):
                 self.warning = '本机模型配置无法读取，请在设置中重新填写 API Key。'
@@ -76,16 +88,25 @@ class ClientModels:
         with self.lock: return dict(self.profiles)
 
     def config(self, engine, profile=None):
-        if engine not in ENGINES: raise ValueError('对话模型选项无效')
+        if engine not in (*ENGINES, TTS_NEXT): raise ValueError('大模型选项无效')
         profile = profile or self.snapshot()[engine]
         profile.validate()
+        if engine==TTS_NEXT:
+            if (profile.model,profile.url)!=(TTS_NEXT,TTS_NEXT_URL):
+                raise ValueError('TTS Next 使用内置接口，请重新保存 API Key')
+            return TTSNextConfig(profile.api_key, self.reference)
+        if engine=='qwen_flash':
+            if (profile.model,profile.url)!=(FLASH_MODEL,FLASH_URL):
+                raise ValueError('实时 Flash 使用内置接口，请重新保存 API Key')
+            if profile.voice: valid_voice_id(profile.voice, FLASH_MODEL)
+            return replace(self.realtime, url=FLASH_URL, model=FLASH_MODEL, api_key=profile.api_key,
+                           voice=profile.voice, voice_target_model=FLASH_MODEL)
         if engine=='gpt': return ChatConfig(profile.model,profile.url,profile.api_key)
-        if engine in ('openai','deepseek'):
+        if engine in ('openai','deepseek','qwen_max'):
             preset = self.presets[engine]
             if (profile.model,profile.url)!=(preset.model,preset.url):
                 raise ValueError('此模型使用内置接口，请重新保存 API Key')
-            return ChatConfig(profile.model,profile.url,profile.api_key,provider=engine)
-        if engine!='qwen': raise ValueError('对话模型选项无效')
+            return ChatConfig(profile.model,profile.url,profile.api_key,provider='custom' if engine=='qwen_max' else engine)
         parsed = urlsplit(profile.url.strip())
         query = parse_qsl(parsed.query,keep_blank_values=True)
         if parsed.fragment or any(name!='model' for name,_ in query) or len(query)>1:
@@ -98,8 +119,10 @@ class ClientModels:
         config = self.config(engine,profile)
         config.validate()
         profiles = self.snapshot(); profiles[engine] = profile
-        payload = json.dumps({'version':2,'profiles':{name:asdict(value) for name,value in profiles.items()}},
-                             ensure_ascii=False).encode('utf-8')
+        saved = {name:asdict(value) for name,value in profiles.items()}
+        for value in saved.values():
+            if not value['voice']: del value['voice']
+        payload = json.dumps({'version':2,'profiles':saved}, ensure_ascii=False).encode('utf-8')
         return profiles, crypt(payload)
 
     def commit(self, prepared):

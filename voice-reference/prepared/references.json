@@ -2,21 +2,36 @@
   "references": [
     {
       "id": "B",
-      "path": "voice-reference\\prepared\\B.wav",
+      "path": "voice-reference\\prepared\\asr-far-end-echo.wav",
       "seconds": 8.46,
       "text": "喂，你在听我说话吗？哼，不讨喜的家伙。"
     },
     {
       "id": "A",
-      "path": "voice-reference/prepared/A.wav",
+      "path": "voice-reference/prepared/asr-near-end.wav",
       "seconds": 7.14,
       "text": "你在试图理解神的想法。好吧，那我就告诉你。"
     },
     {
       "id": "C",
-      "path": "voice-reference/prepared/C.wav",
+      "path": "voice-reference/prepared/indextts-fallback.wav",
       "seconds": 9.0,
       "text": "我对近距离观赏这场死亡戏剧很感兴趣。甚至还引导你们把舞台作为主要活动。"
+    },
+    {
+      "id": "recording2-0-20",
+      "source": "voice-reference\\录音 (2).wav",
+      "source_sha256": "157234eb248970ff24d314ce75a9176f4ac67ccc4bfe9d25b5ce915c8003a095",
+      "start": 0,
+      "end": 20.0,
+      "seconds": 20.0,
+      "text": "你在试图理解神的想法。好吧，那我就告诉你。这里可是剧院呢。我对近距离观赏这场死亡戏剧很感兴趣，甚至还引导你们把舞台作为主要活动",
+      "transcript_status": "automatic ASR, punctuation and known homophones corrected against existing reference transcript; not manually listened",
+      "channel": "mean",
+      "gain_db": 16.284879824236235,
+      "path": "voice-reference/prepared/indextts-primary-20s.wav",
+      "label": "录音（2）· 前20秒",
+      "reference_sha256": "91b0fa16853e6efa717f0d471fe05657c431aafe083b29309b62ff661393c567"
     }
   ]
 }

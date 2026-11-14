@@ -117,6 +117,24 @@ class StreamingTests(unittest.TestCase):
 
 
 class SegmentTests(unittest.TestCase):
+    def test_index_short_clauses_merge_without_losing_punctuation(self):
+        sent=[]; buffer=SentenceBuffer.for_engine(sent.append,'indextts-2.5')
+        text='你先坐下。别着急。我在听。慢慢说。今天发生了什么事情，可以从头告诉我，我们一起想办法。'
+        for char in text: buffer.feed(char)
+        buffer.finish()
+        self.assertEqual(''.join(sent),text)
+        self.assertEqual(sent,['你先坐下。别着急。我在听。慢慢说。今天发生了什么事情，',
+                               '可以从头告诉我，我们一起想办法。'])
+
+    def test_index_short_reply_flushes_and_unpunctuated_reply_is_bounded(self):
+        sent=[]; buffer=SentenceBuffer.for_engine(sent.append,'indextts-2.5')
+        buffer.feed('我在听。'); self.assertEqual(sent,[])
+        buffer.finish(); self.assertEqual(sent,['我在听。'])
+        sent.clear(); text='字'*203
+        buffer.feed(text); buffer.finish()
+        self.assertEqual(''.join(sent),text)
+        self.assertLessEqual(max(map(len,sent)),80)
+
     def test_complete_clauses_emit_before_stream_ends_without_duplicates(self):
         sent=[]; buffer=SentenceBuffer(sent.append)
         buffer.feed('凡人倒是');self.assertEqual(sent,[])
@@ -148,6 +166,29 @@ class FakeVoice:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_index_pipeline_coalesces_short_streamed_clauses_before_synthesis(self):
+        voice=FakeVoice(); voice.tts_engine='indextts-2.5'
+        owner=self
+        class Chat:
+            metrics={}
+            def reply(self,text,on_token,cancel):
+                on_token('你先坐下。别着急。我在听。')
+                owner.assertEqual(voice.sent,[])
+                on_token('慢慢说。今天发生了什么事情，')
+                owner.assertEqual(len(voice.sent),1)
+                on_token('可以从头告诉我，我们一起想办法。')
+                return ''.join(voice.sent)+'可以从头告诉我，我们一起想办法。'
+            def cancel_transport(self): pass
+            def close(self): pass
+        pipeline=ReplyPipeline(Chat(),voice,lambda text:None,lambda text:None)
+        try:
+            turn=pipeline.submit('测试')
+            self.assertTrue(turn.done.wait(2)); self.assertIsNone(turn.error)
+            self.assertEqual(voice.sent,['你先坐下。别着急。我在听。慢慢说。今天发生了什么事情，',
+                                         '可以从头告诉我，我们一起想办法。'])
+            self.assertEqual(voice.begins,1)
+        finally: pipeline.close()
+
     def test_local_preparation_starts_before_cloud_text_and_does_not_wait_for_ready(self):
         prepared=threading.Event(); ready=threading.Event()
         class Voice(FakeVoice):

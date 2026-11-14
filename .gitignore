@@ -20,6 +20,9 @@
 /voice-reference/*.wav
 /voice-reference/audio-inventory*
 /voice-reference/prepared/transcripts.json
+# Live2D editor project is an oversized working file; the exported model is tracked.
+/design/video-call-live2d/*.cmo3
+/design/video-call-live2d/制作清单.md
 
 # Credentials and local assistant settings.
 .env

@@ -1,4 +1,5 @@
 """Reusable streaming transport, bounded request history and content-free timings."""
+import base64
 import json
 import os
 import threading
@@ -11,6 +12,9 @@ from role_prompt import SYSTEM_PROMPT
 BASE_URL = "https://maas.qianwenaiapi.com/compatible-mode/v1"
 CHAT_COMPLETION_URL = f"{BASE_URL}/chat/completions"
 MODEL = "qwen3.8-flash"
+MAX_MODEL = 'qwen3.8-max'
+VISION_MODELS = (MODEL, MAX_MODEL)
+IMAGE_LIMIT = 10 * 1024 * 1024
 
 
 class ChatError(RuntimeError):
@@ -19,6 +23,25 @@ class ChatError(RuntimeError):
 
 class ChatCancelled(ChatError):
     pass
+
+
+def request_error(response):
+    status = response.status_code
+    if status == 403:
+        # Read only a small provider error envelope. Never surface raw bodies.
+        body = bytearray()
+        try:
+            for part in response.iter_content(chunk_size=4096):
+                body.extend(part)
+                if len(body) > 8192:
+                    break
+            else:
+                error = json.loads(body).get('error', {})
+                if error.get('code') == 'AccessDenied.Unpurchased':
+                    return '模型访问被拒绝（HTTP 403）。请确认当前 API Key 所属账号已开通对应服务并有模型权限。'
+        except (ValueError, AttributeError, requests.RequestException):
+            pass
+    return f'聊天请求失败，HTTP {status}；可重试'
 
 
 @dataclass(frozen=True)
@@ -50,7 +73,7 @@ class ChatConfig:
         if self.provider=='openai': return {'max_completion_tokens':max_tokens,'reasoning_effort':'none'}
         options = {'max_tokens':max_tokens}
         if self.provider=='deepseek': options['thinking'] = {'type':'disabled'}
-        elif self.provider=='custom' and self.model=='qwen3.8-flash':
+        elif self.provider=='custom' and self.model in (MODEL, MAX_MODEL):
             options['enable_thinking'] = False
         return options
 
@@ -58,7 +81,7 @@ class ChatConfig:
         self.endpoint()
         key = self.key()
         if not key or len(key)>4096 or any(c.isspace() for c in key):
-            raise ChatError('请在对话模型设置中填写大语言模型 API Key')
+            raise ChatError('请在大模型设置中填写 API Key')
         return self
 
 
@@ -123,7 +146,7 @@ class ChatClient:
         recent = [message for pair in reversed(pairs) for message in pair]
         return [system, *recent, {"role": "user", "content": text}], len(groups) - len(pairs)
 
-    def reply(self, text, on_token=None, max_tokens=512, cancel=None):
+    def reply(self, text, on_token=None, max_tokens=512, cancel=None, *, image_png=None):
         cancel = cancel or threading.Event()
         started = time.perf_counter()
         metrics = {"model": self.config.model if self.config else MODEL, "content_events": 0, "reasoning_characters": 0}
@@ -142,6 +165,16 @@ class ChatClient:
                 messages, omitted = self._messages(text)
                 revision = self._revision
             metrics.update(omitted_history_turns=omitted, request_characters=sum(len(m["content"]) for m in messages))
+            if image_png is not None:
+                if metrics['model'] not in VISION_MODELS:
+                    raise ChatError('当前大模型不支持截图，请在工作区选择视觉模型')
+                if (not isinstance(image_png, bytes) or not image_png.startswith(b'\x89PNG\r\n\x1a\n')
+                        or len(image_png)>IMAGE_LIMIT):
+                    raise ChatError('截图格式或大小不符合要求，请缩小选区后重试')
+                metrics['image_bytes'] = len(image_png)
+                url = 'data:image/png;base64,' + base64.b64encode(image_png).decode('ascii')
+                messages[-1]['content'] = [{'type':'image_url','image_url':{'url':url}},
+                                           {'type':'text','text':text}]
             payload = {"model": metrics['model'], "messages": messages, "stream": True,
                        **(config or ChatConfig()).generation_options(max_tokens)}
             metrics['thinking_disabled'] = (payload.get('enable_thinking') is False or
@@ -158,7 +191,7 @@ class ChatClient:
                     metrics["headers_seconds"] = time.perf_counter() - started
                     check_cancel()
                     if response.status_code != 200:
-                        raise ChatError(f"聊天请求失败，HTTP {response.status_code}；可重试")
+                        raise ChatError(request_error(response))
                     response.encoding = "utf-8"
                     # Small events must not wait for the default 512-byte read buffer.
                     for line in response.iter_lines(chunk_size=1, decode_unicode=True):

@@ -258,7 +258,6 @@ class LiveMicrophone:
         self.stream_factory, self.vad_factory = stream_factory, vad_factory
         self.processor_factory = processor_factory
         self.processor = None
-        self.processor_metrics = None
         self.energy_gate = None
         self.input_metrics = {}
         self._lock = threading.RLock()
@@ -406,7 +405,6 @@ class LiveMicrophone:
                 session.reset()
             if processor:
                 processor.close()
-                self.processor_metrics = processor.timings()
             if stream:
                 try:
                     stream.abort()

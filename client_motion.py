@@ -4,6 +4,8 @@ import time
 from PySide6.QtCore import Property, QPropertyAnimation, QEasingCurve, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QPushButton
+from client_fonts import scaled_size
+from client_theme import COLORS
 
 
 class MotionButton(QPushButton):
@@ -51,7 +53,7 @@ class MotionButton(QPushButton):
         super().paintEvent(event)
         if self._feedback <= .001 or self.feedback_shape=='none' or self.objectName()=='navButton': return
         painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = QColor('#FFFFFF' if self.feedback_shape=='circle' else '#758194')
+        color = QColor(COLORS['surface' if self.feedback_shape=='circle' else 'gray'])
         color.setAlphaF(.14*self._feedback)
         painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(color)
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
@@ -90,12 +92,12 @@ class HeartButton(MotionButton):
         painter.translate(center)
         painter.scale(1-.08*self._feedback,1-.08*self._feedback)
         painter.translate(-center)
-        color='#E5435F' if self.underMouse() else '#D93652'
-        if not self.isEnabled(): color='#8C4554'
+        color=COLORS['primaryHover' if self.underMouse() else 'primary']
+        if not self.isEnabled(): color=COLORS['gray']
         painter.setBrush(QColor(color))
-        painter.setPen(QPen(QColor('#F8BEC7' if self.hasFocus() else '#EB5E76'),1.3))
+        painter.setPen(QPen(QColor(COLORS['surface' if self.hasFocus() else 'alertBorder']),1.3))
         painter.drawPath(self.heart_path())
-        font=self.font(); font.setPixelSize(max(9,round(self.height()*.19))); font.setBold(True)
+        font=self.font(); font.setPixelSize(scaled_size(max(9,round(self.height()*.19))))
         painter.setFont(font); painter.setPen(QColor('#FFFFFF'))
         label='重温' if self.text()=='重温誓约' else self.text()
         painter.drawText(QRectF(0,self.height()*.28,self.width(),self.height()*.36),

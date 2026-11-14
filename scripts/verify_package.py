@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
  path=ROOT/'package-manifest.json'
  if not path.is_file():
-  print(json.dumps({'passed':False,'files':0,'errors':['No release snapshot manifest has been generated. Run Verify-Desktop.cmd to check the current runtime.']}))
+  print(json.dumps({'passed':False,'files':0,'errors':['缺少发布包校验清单。可使用「维护工具 → 检查运行环境」检查当前目录。']},ensure_ascii=False))
   return 2
  manifest=json.loads(path.read_text(encoding='utf-8'))
  errors=[]

@@ -173,7 +173,7 @@ def main():
             wait(lambda:not controller.call_requested)
             QTest.mouseClick(window.text_button,Qt.MouseButton.LeftButton)
             QTest.qWait(80)
-            assert 0 < window.overlay.effect.opacity() < 1
+            assert 0 < window.overlay.transition.get_progress() < 1
             wait(lambda:window.overlay.phase=='shown')
             dialog=window.text_pane; assert dialog.isVisible() and not dialog.isWindow()
             assert window.overlay.surface.graphicsProxyWidget() is window.overlay.proxy
@@ -300,16 +300,17 @@ def main():
                     wait(lambda:getattr(controller.preferences,field)==expected and settings.pending is None)
                 settings.stack.setCurrentWidget(settings.root); click(settings.engine)
                 app.processEvents(); QTest.qWait(80)
-                assert len(settings.selection_buttons)==3 and settings.expanded_model is None
+                assert len(settings.selection_buttons)==5 and settings.expanded_model is None
                 assert all(detail.height()==0 and not detail.isVisible() for detail in settings.model_details.values())
                 assert all(not edit.isVisible() for inputs in settings.model_fields.values() for edit in inputs.values())
                 assert all(row.isVisible() for row in settings.selection_buttons)
                 assert window.grab().save(str(directory/'models-collapsed.png'))
-                checks.append('model page displays three options with GPT removed and all API Key fields hidden')
-                qwen_detail=settings.model_details['qwen']; second_y=settings.selection_buttons[-1].mapTo(settings.selector,settings.selection_buttons[-1].rect().topLeft()).y()
+                checks.append('model page displays five models with synthesis options nested in text-model cards')
+                flash_row = next(row for row in settings.model_rows if row.property('choice')=='gpt')
+                qwen_detail=settings.model_details['qwen']; second_y=flash_row.mapTo(settings.selector,flash_row.rect().topLeft()).y()
                 click(settings.selection_buttons[0]); QTest.qWait(85)
                 assert 0<qwen_detail.get_reveal()<1 and qwen_detail.height()>0
-                assert settings.selection_buttons[-1].mapTo(settings.selector,settings.selection_buttons[-1].rect().topLeft()).y()>second_y
+                assert flash_row.mapTo(settings.selector,flash_row.rect().topLeft()).y()>second_y
                 assert 0<qwen_detail.chevron.progress<1
                 assert window.grab().save(str(directory/'models-expanding.png'))
                 wait(lambda:qwen_detail.get_reveal()==1 and settings.pending is None)
@@ -323,7 +324,7 @@ def main():
                 draft.setFocus(); click(settings.selection_buttons[0]); wait(lambda:not qwen_detail.isVisible())
                 assert qwen_detail.height()==0 and not draft.isVisible() and not draft.hasFocus()
                 checks.append('collapsed model fields are hidden and cannot retain keyboard focus')
-                click(settings.selection_buttons[-1])
+                click(flash_row)
                 wait(lambda:controller.preferences.engine=='gpt' and settings.pending is None)
                 wait(lambda:settings.model_details['gpt'].get_reveal()==1)
                 assert not qwen_detail.isVisible() and settings.expanded_model=='gpt'
@@ -337,25 +338,28 @@ def main():
                 wait(lambda:qwen_detail.get_reveal()==1)
                 checks.append('model selection and foldout also work through keyboard activation')
                 from PySide6.QtWidgets import QLineEdit,QScrollArea
-                assert set(settings.model_fields)=={'qwen','gpt','deepseek'}
+                assert set(settings.model_fields)=={'qwen','qwen_flash','gpt','deepseek','qwen_max'}
                 for engine,inputs in settings.model_fields.items():
                     assert set(inputs)=={'api_key'}
                     assert inputs['api_key'].echoMode()==QLineEdit.EchoMode.Password
-                    assert inputs['api_key'].text()=='ui-fixture-api-key'
-                    assert inputs['api_key'].displayText()!=inputs['api_key'].text()
+                    if engine in ('qwen','gpt','deepseek'):
+                        assert inputs['api_key'].text()=='ui-fixture-api-key'
+                        assert inputs['api_key'].displayText()!=inputs['api_key'].text()
                     assert all(edit.height()>=37 for edit in inputs.values())
                 assert all(edit.isVisible() and edit.isEnabled() for edit in settings.model_fields['qwen'].values())
                 assert all(not edit.isVisible() and not edit.isEnabled() for edit in settings.model_fields['gpt'].values())
                 assert controller.models.snapshot()['gpt'].model=='qwen3.8-flash'
                 assert controller.models.snapshot()['gpt'].url.endswith('/chat/completions')
-                checks.append('all three options show actual model IDs and expand only masked API Key fields')
+                checks.append('model cards show actual model IDs and mask API keys')
                 assert settings.model_rows[0].title.text()=='qwen-audio-3.1-realtime-plus'
-                assert settings.model_rows[1].title.text()=='deepseek-flash'
-                assert settings.model_rows[2].title.text()=='qwen3.8-flash'
+                assert settings.model_rows[1].title.text()=='qwen-audio-3.1-realtime-flash'
+                assert settings.model_rows[2].title.text()=='deepseek-flash'
+                assert settings.model_rows[3].title.text()=='qwen3.8-flash'
+                assert settings.model_rows[4].title.text()=='qwen3.8-max'
                 scroll=settings.selector.findChild(QScrollArea)
                 scroll.verticalScrollBar().setValue(0); app.processEvents()
                 assert window.grab().save(str(directory/'models-qwen.png'))
-                click(settings.selection_buttons[-1]); wait(lambda:settings.pending is None and settings.model_details['gpt'].get_reveal()==1)
+                click(flash_row); wait(lambda:settings.pending is None and settings.model_details['gpt'].get_reveal()==1)
                 scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum()); app.processEvents()
                 assert window.grab().save(str(directory/'models-gpt.png'))
                 calls=chat.calls
@@ -370,7 +374,7 @@ def main():
                 assert (saved_profile.model,saved_profile.url)==(prior_profile.model,prior_profile.url)
                 assert controller.router.backends['gpt'][0].config.model==saved_profile.model
                 assert controller.router.backends['gpt'][0].config.endpoint()==saved_profile.url
-                assert settings.selection_buttons[-1].value.text()=='✓'
+                assert flash_row.value.text()=='✓'
                 assert 'ui-customer-gpt-key' not in controller.models.path.read_bytes().decode('latin1')
                 checks.append('qwen3.8-flash saves its key while retaining the built-in model and URL, with no network request')
                 click(settings.selection_buttons[0]); wait(lambda:settings.pending is None and qwen_detail.get_reveal()==1)
@@ -401,7 +405,7 @@ def main():
             checks.append('device and model choice rows store their actual values')
             checks.append('clearing history requires an in-phone confirmation and leaves history until confirmed')
             window.close_phone(); QTest.qWait(60)
-            assert 0 < window.overlay.effect.opacity() < 1
+            assert 0 < window.overlay.transition.get_progress() < 1
             wait(lambda:window.overlay.phase=='hidden')
             assert window.voice_button.isVisible() and not window.overlay.isVisible()
             checks.append('closing fades out before restoring call controls')

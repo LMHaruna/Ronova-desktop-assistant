@@ -137,7 +137,7 @@ class ContinuityTests(unittest.TestCase):
 
 class RoutingTests(unittest.TestCase):
     def test_only_index_requests_continuous_device_silence(self):
-        for engine in ('indextts-2.5','gpt-sovitsv2proplus'):
+        for engine in ('indextts-2.5',):
             voice=LocalVoice(tts_engine=engine)
             player=Mock();voice.pcm_factory=Mock(return_value=player)
             job=SpeechJob()

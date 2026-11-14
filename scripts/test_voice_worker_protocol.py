@@ -28,6 +28,7 @@ class Model:
     def stop(self):self.stopped.set()
     def set_cancel_check(self,check):self.cancel_check=check
     def run(self,parameters):
+        assert parameters['reference_max_seconds']==20
         if not self.warm:
             assert (threading.get_ident()==self.owner)==worker.SYNTHESIZE_ON_MAIN_THREAD
         self.warm=False;self.stopped.clear()
@@ -37,7 +38,7 @@ class Model:
                 time.sleep(.002)
             yield 22050,np.array([100,-100,50],dtype=np.int16)
 def initialize(force_cpu=False):
-    return Model(),{'id':'C','path':'C.wav','text':'fixture'},0.0,{'device':'cpu','is_half':False}
+    return Model(),{'id':'C','path':'C.wav','text':'fixture','seconds':20},0.0,{'device':'cpu','is_half':False}
 worker.initialize=initialize
 worker.main()
 '''
@@ -92,6 +93,6 @@ class ProtocolTests(unittest.TestCase):
 
     def test_index_main_thread_jobs_cancel_and_close(self):self.run_worker(True)
     def test_index_main_thread_eof_exits(self):self.run_worker(True,True)
-    def test_gpt_background_protocol_is_preserved(self):self.run_worker(False)
+    def test_shared_background_protocol_is_preserved(self):self.run_worker(False)
 
 if __name__=='__main__':unittest.main()

@@ -1,9 +1,5 @@
-"""IndexTTS uses the same job queue, cancellation and fragments as GPT-SoVITS."""
-import voice_worker
-from index_voice_backend import initialize
-
-voice_worker.initialize = initialize
-voice_worker.SYNTHESIZE_ON_MAIN_THREAD = True
+"""Entry point for the persistent IndexTTS job worker."""
+from voice_worker import main
 
 if __name__ == '__main__':
-    voice_worker.main()
+    main()

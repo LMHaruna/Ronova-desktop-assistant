@@ -22,7 +22,7 @@ from client_fixtures import FakeCall, fake_router
 from client_app import ClientWindow
 from client_memory_panel import MemoryPane
 from client_oath_panel import OathDialog
-from client_oath import DURATION, LINES
+from client_oath import DURATION
 from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 from PySide6.QtCore import QPoint, Qt
@@ -339,13 +339,11 @@ class OathUiTests(OathControllerFixture,unittest.TestCase):
         self.assertFalse(self.controller.memory.profile()['oath_completed'])
         self.assertFalse(self.controller.snapshot()['oath_active'])
 
-    def test_ui_skip_keeps_all_subtitles_readable_until_return(self):
+    def test_ui_skip_shows_the_last_frame_until_return(self):
         dialog=self.start_ui(); dialog.primary.click()
         self.wait(lambda:dialog.finished_ceremony)
         self.assertTrue(dialog.isVisible()); self.assertEqual(dialog.primary.text(),'返回日常')
-        self.assertEqual(dialog.caption.visible_text,'\n'.join(LINES))
-        self.assertEqual(dialog.caption.mode,'all')
-        self.assertTrue(dialog.caption.isVisible())
+        self.assertEqual(dialog.scene.picture.cacheKey(), dialog.assets.ending_image.cacheKey())
         dialog.primary.click(); self.wait(lambda:not dialog.isVisible())
         self.window.refresh(); self.assertEqual(self.window.assets.stage,'bond')
         self.assertEqual(self.controller.memory.profile()['stage'],'bond')
@@ -380,7 +378,6 @@ class OathUiTests(OathControllerFixture,unittest.TestCase):
         QTest.mouseClick(self.window.oath_button,Qt.MouseButton.LeftButton)
         self.dialog=self.window.oath_dialog; self.wait(lambda:self.dialog.token is not None)
         self.assertTrue(self.controller.snapshot()['oath_active'])
-        self.assertEqual(self.dialog.caption.mode,'play')
         self.assertEqual(self.dialog.primary.text(),'跳过动画')
         self.assertEqual(self.controller.memory.profile()['affinity'],100)
         self.window.open_oath(); self.assertIs(self.dialog,self.window.oath_dialog)
@@ -439,7 +436,6 @@ class OathUiTests(OathControllerFixture,unittest.TestCase):
             self.wait(lambda:self.dialog.token is not None)
             self.assertEqual(begin.call_count,1)
             self.assertTrue(begin.call_args.kwargs['replay'])
-        self.assertEqual(self.dialog.caption.mode,'play')
         self.assertEqual(self.dialog.primary.text(),'跳过动画')
         self.dialog.secondary.click(); self.wait(lambda:not self.dialog.isVisible())
         self.assertEqual(self.controller.memory.profile()['oath_completed_at'],date)
@@ -484,7 +480,6 @@ class OathUiTests(OathControllerFixture,unittest.TestCase):
             dialog=self.preview()
             self.wait(lambda:dialog.primary.text()=='重试播放')
         self.assertEqual(dialog.primary.text(),'重试播放')
-        self.assertEqual(dialog.caption.mode,'play')
         dialog.primary.click(); self.wait(lambda:dialog.token is not None)
         self.assertEqual(dialog.primary.text(),'跳过动画')
 
@@ -525,8 +520,8 @@ class OathUiTests(OathControllerFixture,unittest.TestCase):
         self.assertTrue(self.controller.memory.profile()['oath_completed'])
         self.assertFalse(self.controller.snapshot()['oath_active'])
 
-    def test_ui_missing_script_prevents_start_and_save(self):
-        with patch('client_oath_panel.validate_ceremony',side_effect=RuntimeError('仪式字幕未就绪')):
+    def test_ui_missing_media_prevents_start_and_save(self):
+        with patch('client_oath_panel.OathAssets',side_effect=RuntimeError('仪式素材未就绪')):
             dialog=self.preview()
         self.assertFalse(dialog.primary.isEnabled())
         self.assertFalse(self.controller.snapshot()['oath_active'])

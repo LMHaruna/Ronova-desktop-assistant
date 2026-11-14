@@ -7,6 +7,7 @@ No upload, enrollment or network request occurs when this module is imported.
 """
 from pathlib import Path
 from urllib.parse import urlsplit
+import base64
 import hashlib
 import math
 import re
@@ -85,10 +86,15 @@ def prepare_reference(source, destination, start=.66, end=15.96):
             'source_unmodified': True, 'background_separation': False}
 
 
-def valid_voice_id(value):
-    if not isinstance(value, str) or not re.fullmatch(re.escape(TARGET_MODEL) + r'-[A-Za-z0-9_-]{1,160}', value):
+def valid_voice_id(value, target_model=TARGET_MODEL):
+    if not isinstance(value, str) or not re.fullmatch(re.escape(target_model) + r'-[A-Za-z0-9_-]{1,160}', value):
         raise EnrollmentError('返回的音色 ID 未绑定到 Qwen-Audio 3.1，保留当前音色')
     return value
+
+
+def reference_data(path):
+    inspect_audio(path)
+    return 'data:audio/wav;base64,' + base64.b64encode(Path(path).read_bytes()).decode('ascii')
 
 
 class VoiceEnrollment:
@@ -178,6 +184,12 @@ class VoiceEnrollment:
                   'target_model': TARGET_MODEL, 'prefix': prefix, 'url': reference_url}})
         output = self._json(response, 'output', '音色创建')
         return valid_voice_id(output.get('voice_id'))
+
+    def create_from_sample(self, reference, target_model):
+        response = self._request('POST', API_BASE + '/services/audio/tts/customization', '创建若娜瓦音色',
+            json={'model': ENROLLMENT_MODEL, 'input': {'action': 'create_voice',
+                  'target_model': target_model, 'prefix': 'ronova', 'audio': reference_data(reference)}})
+        return valid_voice_id(self._json(response, 'output', '音色创建').get('voice_id'), target_model)
 
     def query(self, voice):
         valid_voice_id(voice)

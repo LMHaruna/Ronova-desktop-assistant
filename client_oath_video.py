@@ -10,11 +10,11 @@ import wave
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor,QImage,QPainter,QPixmap
 from PySide6.QtWidgets import QWidget
-from client_oath import LINES
+from client_oath import DURATION, FPS, FRAME_COUNT
 import pcm_player
 
 ASSET_ROOT=Path(__file__).resolve().parent/'design/oath-video'
-FFMPEG=Path(pcm_player.__file__).resolve().parent/'runtime/gpt-sovits/ffmpeg.exe'
+FFMPEG=Path(pcm_player.__file__).resolve().parent/'runtime/indextts-2.5/bin/ffmpeg.exe'
 
 
 def sha(path):
@@ -29,40 +29,21 @@ class OathVideoAssets:
         self.root=Path(root)
         try:
             saved=json.loads((self.root/'manifest.json').read_text(encoding='utf-8'))
-            if saved['version']!=1 or tuple(saved['lines'])!=LINES: raise ValueError('script mismatch')
-            self.canvas=tuple(saved['canvas']); self.decode_size=tuple(saved['decode_size'])
-            self.fps=saved['fps']; self.frame_count=saved['frame_count']; self.duration=saved['duration_seconds']
-            self.line_times=tuple(saved['line_times']); self.beats=tuple(saved['beats'])
-            if (self.canvas!=(1288,1608) or self.decode_size!=(644,804) or self.fps!=24 or
-                self.frame_count!=384 or self.duration!=16 or len(self.line_times)!=3 or
-                not 0<=self.line_times[0]<self.line_times[1]<self.line_times[2]<self.duration):
-                raise ValueError('invalid timeline')
+            if saved['version'] != 2:
+                raise ValueError('unsupported asset manifest')
+            self.decode_size = (540, 960)
+            self.fps = FPS
+            self.frame_count = FRAME_COUNT
+            self.duration = DURATION
             for name in ('video','audio','poster','ending'):
                 spec=saved[name]; path=self.confined(spec['file'])
                 if sha(path)!=spec['sha256']: raise ValueError('asset hash mismatch')
                 setattr(self,name,path)
             with wave.open(str(self.audio),'rb') as sound:
                 if (sound.getnchannels()!=1 or sound.getsampwidth()!=2 or sound.getframerate()!=24000 or
-                    sound.getnframes()!=384000): raise ValueError('invalid mixed PCM')
+                    sound.getnframes()!=round(self.duration * 24000)): raise ValueError('invalid mixed PCM')
             self.poster_image=QPixmap(str(self.poster)); self.ending_image=QPixmap(str(self.ending))
             if self.poster_image.isNull() or self.ending_image.isNull(): raise ValueError('invalid still')
-            spec=saved['captions']; path=self.confined(spec['file'])
-            if sha(path)!=spec['sha256']: raise ValueError('caption hash mismatch')
-            captions=json.loads(path.read_text(encoding='utf-8'))
-            if captions['version']!=1 or captions['source_audio_sha256']!=saved['audio']['sha256']:
-                raise ValueError('caption source mismatch')
-            self.captions=captions['lines']
-            if len(self.captions)!=len(LINES): raise ValueError('caption lines incomplete')
-            for text,start,line in zip(LINES,self.line_times,self.captions):
-                events=line['characters']
-                if (line['text']!=text or line['start']!=start or
-                    ''.join(item['text'] for item in events)!=text or
-                    not start<line['end']<=self.duration):
-                    raise ValueError('invalid caption script')
-                times=[item['at'] for item in events]
-                if any(not isinstance(t,(int,float)) or not start<=t<=line['end'] for t in times):
-                    raise ValueError('invalid caption timing')
-                if times!=sorted(times): raise ValueError('unordered caption timing')
             if not FFMPEG.is_file(): raise ValueError('decoder missing')
         except (OSError,ValueError,KeyError,TypeError,IndexError,wave.Error) as exc:
             raise RuntimeError('仪式素材未就绪，请重新安装完整素材后重试。') from exc
@@ -88,7 +69,7 @@ class VideoDecoder:
             width,height=self.assets.decode_size; size=width*height*3
             self.process=subprocess.Popen([str(FFMPEG),'-hide_banner','-loglevel','error','-nostdin',
                 '-threads','2','-i',str(self.assets.video),'-an','-sn','-dn',
-                '-vf',f'scale={width}:{height}','-pix_fmt','rgb24','-f','rawvideo','pipe:1'],
+                '-vf',f'fps={self.assets.fps},scale={width}:{height}','-pix_fmt','rgb24','-f','rawvideo','pipe:1'],
                 stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             if self.cancelled.is_set(): self.process.terminate(); return
@@ -170,7 +151,7 @@ class OathVideoScene(QWidget):
         if self.picture.isNull(): return QRectF()
         scale=min((self.width()-40)/self.picture.width(),self.height()/self.picture.height())
         width=self.picture.width()*scale; height=self.picture.height()*scale
-        return QRectF(self.width()*.41-width/2,(self.height()-height)/2,width,height)
+        return QRectF((self.width()-width)/2,(self.height()-height)/2,width,height)
 
     def paintEvent(self,event):
         painter=QPainter(self); painter.fillRect(self.rect(),QColor('#1d1c22'))

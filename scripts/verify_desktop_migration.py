@@ -21,12 +21,12 @@ def forbid(*args,**kwargs):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--quick',action='store_true')
-    parser.add_argument('--voice',action='store_true',help='Warm up GPT-SoVITS locally; no playback or microphone.')
-    parser.add_argument('--tts-engine',choices=('gpt-sovitsv2proplus','indextts-2.5'),default='gpt-sovitsv2proplus')
+    parser.add_argument('--voice',action='store_true',help='Warm up IndexTTS locally; no playback or microphone.')
+    parser.add_argument('--tts-engine',choices=('indextts-2.5',),default='indextts-2.5')
     parser.add_argument('--output',type=Path)
     args=parser.parse_args()
     os.environ.update(QT_QPA_PLATFORM='offscreen',HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',
-                      NLTK_DATA=str(ROOT/'runtime/gpt-nltk-data'),PYTHONDONTWRITEBYTECODE='1')
+                      NLTK_DATA=str(ROOT/'runtime/indextts-2.5/nltk_data'),PYTHONDONTWRITEBYTECODE='1')
     socket.create_connection=forbid
     socket.socket.connect=forbid
     modules=('PySide6.QtWidgets','numpy','scipy','torch','torchaudio','onnxruntime','sherpa_onnx',

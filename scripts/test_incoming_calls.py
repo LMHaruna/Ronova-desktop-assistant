@@ -15,6 +15,7 @@ CODE=Path(os.environ.get('RONOVA_CODE_ROOT',Path(__file__).resolve().parents[1])
 sys.path[:0]=[str(CODE),str(CODE/'scripts'),str(ROOT),str(ROOT/'scripts'),str(ROOT/'runtime/client-tools')]
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from client_calls import CallStore, SHANGHAI, parse_decision, first_line, opening_key, varied_opening
+from chat_client import ChatError
 from client_store import Preferences, HistoryStore
 from client_controller import DesktopController
 from client_fixtures import FakeCall, fake_router
@@ -25,7 +26,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea
 from PySide6.QtTest import QTest
 from PySide6.QtCore import Qt
 
-PROPOSAL={'call':True,'reason':'想问问你昨天的事','opening':'凡人，昨天那件事，后来怎么样了？'}
+PROPOSAL={'action':'call','topic':'昨天的项目进展','reason':'想问问你昨天的事','opening':'凡人，昨天那件事，后来怎么样了？'}
+TEXT={'action':'text','topic':PROPOSAL['topic'],'message':'昨天那个项目推进得怎么样？要一起梳理下后续吗？'}
 
 
 class Clock:
@@ -52,33 +54,28 @@ class PolicyTests(unittest.TestCase):
         self.path=Path(self.directory.name)/'calls.sqlite3'; self.store=CallStore(self.path)
     def tearDown(self): self.store.close(); self.directory.cleanup()
     def test_strict_model_decision_and_no_call(self):
-        self.assertIsNone(parse_decision('{"call":false}'))
+        self.assertIsNone(parse_decision('{"action":"wait"}'))
         self.assertEqual(parse_decision(PROPOSAL)['opening'],PROPOSAL['opening'])
-        for value in ({'call':'true'}, {'call':1}, {'call':True,'reason':'a','opening':''},
-                      {'call':True,'reason':'a','opening':'x'*121}, {'call':True,'reason':'a\n','opening':'b'}):
+        self.assertEqual(parse_decision(TEXT),TEXT)
+        for value in ({'action':'bad'}, {'action':1}, dict(PROPOSAL,opening=''),
+                      dict(PROPOSAL,opening='x'*121),dict(PROPOSAL,reason='a\n'),
+                      dict(TEXT,topic='!?'),dict(TEXT,message='x'*201)):
             with self.assertRaises((ValueError,TypeError)): parse_decision(value)
-    def test_defaults_disabled_and_quiet_window(self):
-        p=Preferences(); self.assertTrue(self.store.allowed(p,self.clock()))
-        self.assertFalse(self.store.allowed(replace(p,proactive_calls=False),self.clock()))
-        for hour,allowed in ((8,False),(9,True),(22,True),(23,False)):
-            now=datetime(2026,10,13,hour,tzinfo=SHANGHAI).timestamp()
-            self.assertEqual(self.store.allowed(p,now),allowed)
-    def test_overnight_window(self):
-        p=Preferences(call_start_hour=22,call_end_hour=7)
-        for hour,allowed in ((0,True),(6,True),(7,False),(21,False),(22,True)):
-            self.assertEqual(self.store.allowed(p,datetime(2026,10,13,hour,tzinfo=SHANGHAI).timestamp()),allowed)
-    def test_limits_persist_and_test_calls_do_not_consume_quota(self):
-        p=Preferences()
-        self.store.create('qwen',parse_decision(PROPOSAL),'test',True,self.clock())
-        self.assertTrue(self.store.allowed(p,self.clock()))
+    def test_legacy_timer_preferences_require_fresh_opt_in(self):
+        path=self.path.with_suffix('.json')
+        path.write_text('{"proactive_calls":true,"call_start_hour":3,"call_daily_limit":2}',encoding='utf-8')
+        prefs=Preferences.load(path)
+        self.assertFalse(prefs.proactive_text or prefs.proactive_calls)
+        prefs=replace(prefs,proactive_calls=True); prefs.save(path)
+        self.assertEqual(Preferences.load(path),prefs)
+        self.assertNotIn('call_daily_limit',path.read_text(encoding='utf-8'))
+    def test_events_and_topics_persist_across_restart(self):
+        self.assertTrue(self.store.remember_event('one'))
         self.store.create('qwen',parse_decision(PROPOSAL),'one',False,self.clock())
-        self.assertFalse(self.store.allowed(p,self.clock()+10799))
-        self.assertTrue(self.store.allowed(p,self.clock()+10800))
-        self.store.create('qwen',parse_decision(PROPOSAL),'two',False,self.clock()+10800)
         self.store.close(); self.store=CallStore(self.path)
-        self.assertFalse(self.store.allowed(p,self.clock()+21600))
-        self.assertEqual(self.store.get('last_fingerprint'),'two')
-        self.assertTrue(self.store.allowed(p,self.clock()+86400))
+        self.assertFalse(self.store.remember_event('one'))
+        self.assertFalse(self.store.claim_topic('昨天的项目进展！'))
+        self.assertEqual(self.store.topics(),[PROPOSAL['topic']])
     def test_restart_does_not_revive_ringing_and_preserves_snooze(self):
         a=self.store.create('qwen',parse_decision(PROPOSAL),'a',False,self.clock())
         b=self.store.create('qwen',parse_decision(PROPOSAL),'b',True,self.clock())
@@ -87,8 +84,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(self.store.find(a['id'])['state'],'missed')
         self.assertEqual(self.store.pending()[0]['id'],b['id'])
     def test_invalid_preferences(self):
-        for p in (Preferences(proactive_calls=1),Preferences(call_daily_limit=0),Preferences(call_start_hour=23,call_end_hour=23),
-                  Preferences(call_idle_minutes=1),Preferences(call_cooldown_hours=True)):
+        for p in (Preferences(proactive_calls=1),Preferences(proactive_text='true')):
             with self.assertRaises(ValueError): p.validate()
     def test_test_calls_do_not_repeat_recent_first_sentences_even_after_restart(self):
         previous=[]
@@ -102,7 +98,7 @@ class PolicyTests(unittest.TestCase):
     def test_model_duplicate_first_sentence_gets_new_greeting_and_preserves_topic(self):
         proposal=parse_decision(PROPOSAL)
         one=self.store.create('qwen',proposal,'one',False,self.clock())
-        two=self.store.create('qwen',proposal,'two',False,self.clock())
+        two=self.store.create('qwen',dict(proposal,topic='另一个项目'),'two',False,self.clock())
         self.assertNotEqual(opening_key(one['opening']),opening_key(two['opening']))
         self.assertIn(PROPOSAL['opening'],two['opening'])
     def test_punctuation_changes_do_not_bypass_opening_variety(self):
@@ -144,48 +140,184 @@ class IncomingBase(unittest.TestCase):
     def seed(self):
         self.controller.store.begin('seed','qwen','昨天说的事情')
         self.controller.store.update('seed','后来如何','completed')
+    def enable(self, *, text=False, calls=True):
+        self.controller.apply_preferences(replace(self.controller.preferences,
+            proactive_text=text,proactive_calls=calls)).result(3)
+    def offer(self, message='昨天的项目现在有新进展', *, source='text'):
+        self.calls.offer(source,message,'qwen')
     def tick(self,seconds=1): self.clock.advance(seconds); self.controller.poll()
-    def idle(self):
-        # Simulate active scheduler across an idle period, not waking from sleep.
-        self.clock.advance(900); self.calls.last_tick=self.clock()-1; self.controller.poll()
     def finish_decision(self):
         if self.calls.future: self.calls.future.result(3)
         self.tick()
 
 
 class IncomingTests(IncomingBase):
-    def test_startup_no_network_no_microphone_and_no_history_no_decision(self):
-        self.idle(); self.assertEqual(self.planner.calls,0); self.assertFalse(self.controller.call.active)
+    def test_no_network_or_microphone_from_old_history_and_elapsed_time(self):
+        self.enable(text=True); self.seed()
+        for _ in range(60): self.tick(60)
+        self.assertEqual(self.planner.calls,0); self.assertFalse(self.controller.call.active)
     def test_real_eligible_decision_rings_without_capture(self):
-        self.seed(); self.idle(); self.finish_decision()
+        self.enable(); self.offer(); self.tick(6); self.finish_decision()
         row=self.controller.snapshot()['incoming']; self.assertEqual(row['reason'],PROPOSAL['reason'])
         self.assertEqual(self.planner.calls,1); self.assertFalse(self.controller.call.active)
         self.assertEqual(self.controller.call.starts,[])
+    def test_call_waits_for_idle_and_voice_readiness_without_asking_model_again(self):
+        self.enable(); self.offer(); self.tick(6)
+        self.calls.future.result(3)
+        self.clock.advance(1)
+        self.controller.poll(interaction_busy=True)
+        self.assertIsNone(self.calls.snapshot())
+        with patch.object(self.controller,'voice_load_state',return_value={'voice_ready':False}):
+            self.tick()
+            self.assertIsNone(self.calls.snapshot())
+        self.tick()
+        self.assertEqual(self.calls.snapshot()['reason'],PROPOSAL['reason'])
+        self.assertEqual(self.planner.calls,1)
+        self.assertEqual(self.controller.call.starts,[])
+    def test_deferred_call_expires_with_its_trigger(self):
+        self.enable(); self.offer(); self.tick(6)
+        self.calls.future.result(3)
+        for _ in range(2):
+            self.clock.advance(57)
+            self.controller.poll(interaction_busy=True)
+        self.tick()
+        self.assertIsNone(self.calls.snapshot())
+        self.assertIsNone(self.calls.future)
     def test_planner_receives_recent_first_lines_and_test_call_is_local(self):
         a=self.ring(); opening=self.calls.snapshot()['opening']; self.controller.decline_call(a).result(3)
-        self.seed(); self.idle(); self.finish_decision()
+        self.enable(); self.offer(); self.tick(6); self.finish_decision()
         self.assertIn(first_line(opening),self.planner.context['recent_opening_lines'])
         self.assertEqual(self.chat.calls,0); self.assertEqual(self.controller.call.starts,[])
-    def test_no_call_result_and_retry_frequency(self):
-        self.seed(); self.planner.result={'call':False}; self.idle(); self.finish_decision()
+    def test_wait_result_and_repeated_event_do_not_retry(self):
+        self.enable(); self.planner.result={'action':'wait'}; self.offer(); self.tick(6); self.finish_decision()
         self.assertIsNone(self.controller.snapshot()['incoming']); self.tick(30)
+        self.offer('昨天的项目现在有新进展！',source='voice'); self.tick(6)
+        self.assertIsNone(self.calls.future)
         self.assertEqual(self.planner.calls,1)
     def test_responding_defers_decision(self):
-        self.seed(); self.chat.release=threading.Event()
+        self.enable(); self.chat.release=threading.Event()
         self.controller.submit('继续').result(3); self.assertTrue(self.chat.entered.wait(2))
-        self.idle(); self.assertEqual(self.planner.calls,0)
+        self.offer(); self.tick(6); self.assertEqual(self.planner.calls,0)
         self.chat.release.set(); self.controller.pipeline.wait_finished(3)
     def test_active_call_and_oath_defer_decision(self):
-        self.seed(); self.controller.start_call().result(3); self.idle(); self.assertEqual(self.planner.calls,0)
+        self.enable(); self.controller.start_call().result(3); self.offer(); self.tick(6)
+        self.assertEqual(self.planner.calls,0)
         self.controller.end_call().result(3)
-        self.controller.oath_session={'token':'fixture'}; self.idle(); self.assertEqual(self.planner.calls,0)
+        self.controller.oath_session={'token':'fixture'}; self.offer(); self.tick(6)
+        self.assertEqual(self.planner.calls,0)
         self.controller.oath_session=None
     def test_activity_invalidates_inflight_decision(self):
-        self.seed(); self.planner.release=threading.Event(); self.idle()
+        self.enable(text=True); self.planner.release=threading.Event(); self.offer(); self.tick(6)
         self.assertTrue(self.planner.entered.wait(2)); self.calls.activity(); self.finish_decision()
         self.assertIsNone(self.controller.snapshot()['incoming'])
-    def test_sleep_resume_requires_fresh_idle_and_misses_old_call(self):
-        self.seed(); self.tick(1000); self.assertEqual(self.planner.calls,0)
+        self.assertEqual(self.controller.records(),[])
+    def test_text_uses_completed_turn_and_stays_assistant_only(self):
+        self.enable(text=True,calls=False)
+        self.planner.result=TEXT
+        query='昨天的项目现在有新进展'
+        with patch.object(self.controller.lore,'context',return_value='有关的知识片段') as knowledge:
+            self.controller.submit(query).result(3)
+            self.assertTrue(self.controller.pipeline.wait_finished(3))
+            self.tick(6); self.finish_decision()
+        self.assertEqual(self.planner.context['available_actions'],['text'])
+        self.assertEqual(self.planner.context['event'],{'source':'text','content':query})
+        self.assertIn(query,[m['content'] for m in self.planner.context['conversation']])
+        self.assertEqual(self.planner.context['knowledge'],'有关的知识片段')
+        knowledge.assert_any_call(query,self.planner.context['conversation'])
+        row=self.controller.records()[-1]
+        self.assertEqual((row['source'],row['user'],row['assistant']),('proactive','',TEXT['message']))
+        self.controller.executor.submit(lambda: None).result(3)
+        self.assertEqual(self.voice.replayed,[TEXT['message']])
+        self.assertEqual(self.controller.playback_record_id,row['id'])
+        self.assertEqual(self.chat.history[-1],{'role':'assistant','content':TEXT['message']})
+        self.controller.restore_contexts()
+        self.assertEqual(self.chat.history[-1],{'role':'assistant','content':TEXT['message']})
+        self.tick(60)
+        self.assertEqual(self.planner.calls,1)
+        self.assertEqual(self.controller.call.starts,[])
+    def test_proactive_text_is_saved_without_speech_when_autoplay_is_off(self):
+        self.enable(text=True,calls=False)
+        self.controller.apply_preferences(replace(self.controller.preferences,autoplay=False)).result(3)
+        self.planner.result=TEXT
+        self.offer(); self.tick(6); self.finish_decision()
+        self.controller.executor.submit(lambda: None).result(3)
+        self.assertEqual(self.controller.records()[-1]['assistant'],TEXT['message'])
+        self.assertEqual(self.voice.replayed,[])
+        self.assertEqual(self.controller.call.starts,[])
+    def test_disabled_channel_is_never_delivered(self):
+        self.offer(); self.tick(6)
+        self.assertIsNone(self.calls.future)
+        self.enable(text=True,calls=False); self.offer(); self.tick(6); self.finish_decision()
+        self.assertEqual(self.planner.context['available_actions'],['text'])
+        self.assertIsNone(self.calls.snapshot())
+        self.enable(); self.planner.result=TEXT; self.offer('今天的新项目完成了'); self.tick(6); self.finish_decision()
+        self.assertEqual(self.planner.context['available_actions'],['call'])
+        self.assertEqual(self.controller.records(),[])
+    def test_affinity_admits_shorter_events_for_text_without_admitting_calls(self):
+        self.enable(text=True)
+        for score, message, stage in (
+            (0,'图纸画完',None),
+            (30,'图纸画完','familiar'),
+            (30,'画完了',None),
+            (70,'画完了','close'),
+        ):
+            with self.subTest(score=score,message=message):
+                with self.controller.memory.lock,self.controller.memory.connection:
+                    self.controller.memory.connection.execute(
+                        "UPDATE profile SET affinity=?,stage='acquaintance'",(score,))
+                self.offer(message); self.tick(6)
+                if stage is None:
+                    self.assertIsNone(self.calls.future)
+                else:
+                    self.assertIsNotNone(self.calls.future)
+                    self.finish_decision()
+                    self.assertEqual(self.planner.context['relationship_stage'],stage)
+                    self.assertEqual(self.planner.context['available_actions'],['text'])
+                    self.assertIsNone(self.calls.snapshot())
+        self.offer(); self.tick(6); self.finish_decision()
+        self.assertEqual(self.planner.context['available_actions'],['text','call'])
+        self.assertIsNotNone(self.calls.snapshot())
+    def test_voice_readiness_does_not_block_text(self):
+        self.enable(text=True); self.planner.result=TEXT; self.offer()
+        with patch.object(self.controller,'voice_load_state',return_value={'voice_ready':False}):
+            self.tick(6); self.finish_decision()
+        self.assertEqual(self.planner.context['available_actions'],['text'])
+        self.assertEqual(self.controller.records()[-1]['assistant'],TEXT['message'])
+    def test_model_failure_surfaces_reason_once(self):
+        self.enable(); self.offer()
+        with patch.object(self.planner,'decide',side_effect=ChatError('模型暂不可用')) as decide:
+            self.tick(6)
+            with self.assertRaises(ChatError): self.calls.future.result(3)
+            self.clock.advance(1)
+            events=self.controller.poll()
+            self.assertIn({'kind':'incoming_decision_failed','message':'模型暂不可用'},events)
+            self.tick(30)
+            self.assertEqual(decide.call_count,1)
+    def test_disabling_text_cancels_inflight_result(self):
+        self.enable(text=True); self.planner.result=TEXT; self.planner.release=threading.Event()
+        self.offer(); self.tick(6); self.assertTrue(self.planner.entered.wait(2))
+        self.enable(text=False)
+        self.finish_decision()
+        self.assertEqual(self.controller.records(),[])
+        self.assertIsNone(self.calls.snapshot())
+    def test_manual_memory_is_a_trigger(self):
+        self.enable(text=True,calls=False); self.planner.result={'action':'wait'}
+        message='我喜欢在周末画建筑速写'
+        self.controller.save_memory(message).result(3)
+        self.tick(6); self.finish_decision()
+        self.assertEqual(self.planner.context['event'],{'source':'memory','content':message})
+        self.assertIn(message,self.planner.context['memory'])
+    def test_voice_topic_is_considered_after_hangup(self):
+        self.enable(); self.controller.start_call().result(3)
+        self.controller.pipeline.submit('昨天的项目现在有新进展',input_metrics={})
+        self.assertTrue(self.controller.pipeline.wait_finished(3))
+        self.tick(6); self.assertEqual(self.planner.calls,0)
+        self.controller.end_call().result(3)
+        self.tick(6); self.finish_decision()
+        self.assertEqual(self.planner.context['event']['source'],'voice')
+        self.assertIsNotNone(self.calls.snapshot())
+    def test_sleep_resume_discards_stale_event_and_misses_old_call(self):
+        self.enable(); self.offer(); self.tick(1000); self.assertEqual(self.planner.calls,0)
         self.ring(); self.tick(1000)
         self.assertIsNone(self.controller.snapshot()['incoming']); self.assertEqual(self.calls.store.recent()[0]['state'],'missed')
     def test_accept_opening_is_assistant_only_and_voice_continues(self):
@@ -227,7 +359,7 @@ class IncomingTests(IncomingBase):
         self.controller.decline_call(a,later=True).result(3)
         self.assertEqual(self.calls.store.find(a)['state'],'declined'); self.assertEqual(self.calls.store.pending(),[])
     def test_disable_withdraws_incoming_without_stopping_ongoing_chat(self):
-        a=self.ring(); self.controller.apply_preferences(replace(self.controller.preferences,proactive_calls=False)).result(3)
+        self.enable(); a=self.ring(); self.enable(calls=False)
         self.assertIsNone(self.calls.snapshot()); self.assertEqual(self.calls.store.find(a)['state'],'withdrawn')
         self.controller.start_call().result(3)
         self.controller.apply_preferences(replace(self.controller.preferences,proactive_calls=True)).result(3)
@@ -268,11 +400,13 @@ class IncomingTests(IncomingBase):
     def test_rejects_duplicate_accept(self):
         a=self.ring(); self.controller.answer_call(a).result(3)
         self.assertIsNone(self.controller.answer_call(a).result(3)); self.assertEqual(len(self.controller.call.starts),1)
-    def test_completed_topic_is_not_recalled_after_decline_or_restart(self):
-        self.seed(); self.idle(); self.finish_decision(); a=self.calls.snapshot()['id']
+    def test_declined_topic_cannot_switch_to_text(self):
+        self.enable(text=True); self.offer(); self.tick(6); self.finish_decision()
+        a=self.calls.snapshot()['id']
         self.controller.decline_call(a).result(3)
-        self.clock.advance(4*3600); self.calls.last_tick=self.clock()-1; self.calls.last_activity=self.clock()-1000
-        self.controller.poll(); self.assertEqual(self.planner.calls,1)
+        self.planner.result=TEXT; self.offer('昨天的项目又推进了一点'); self.tick(6); self.finish_decision()
+        self.assertIn(PROPOSAL['topic'],self.planner.context['contacted_topics'])
+        self.assertEqual(self.planner.calls,2); self.assertEqual(self.controller.records(),[])
     def test_clear_history_removes_call_content_and_pending_reminders(self):
         a=self.ring(); self.controller.decline_call(a,later=True).result(3)
         self.controller.clear_history().result(3)
@@ -310,33 +444,46 @@ class IncomingUiTests(IncomingBase):
         self.assertTrue(self.window.overlay.viewport().rect().contains(point))
         QTest.mouseClick(self.window.overlay.viewport(),Qt.MouseButton.LeftButton,pos=point); QTest.qWait(250)
 
-    def test_incoming_settings_live_on_child_page_and_return_to_it(self):
+    def test_mouse_click_keeps_inflight_text_and_keypress_cancels_pending_text(self):
+        self.enable(text=True,calls=False)
+        self.planner.result=TEXT
+        self.planner.release=threading.Event()
+        self.offer(); self.tick(6)
+        self.assertTrue(self.planner.entered.wait(2))
+        viewport=self.window.overlay.viewport()
+        QTest.mouseClick(viewport,Qt.MouseButton.LeftButton,pos=viewport.rect().center())
+        self.assertFalse(self.planner.release.is_set())
+        self.planner.release.set()
+        self.finish_decision()
+        self.assertEqual(self.controller.records()[-1]['assistant'],TEXT['message'])
+        self.offer('接下来准备做新的模型')
+        self.assertIsNotNone(self.calls.pending_event)
+        QTest.keyClick(viewport,Qt.Key.Key_A)
+        self.assertIsNone(self.calls.pending_event)
+
+    def test_proactive_settings_show_two_independent_switches_and_token_warning(self):
         self.window.settings(); QTest.qWait(350); pane=self.window.settings_pane
-        self.assertFalse(any(pane.root.isAncestorOf(row) for row in pane.call_rows.values()))
-        self.assertFalse(pane.root.isAncestorOf(pane.proactive))
-        self.assertFalse(pane.root.isAncestorOf(pane.test_call_row))
+        self.assertEqual(pane.proactive_row.title.text(),'主动回应')
         self.click(pane.proactive_row); self.assertIs(pane.stack.currentWidget(),pane.call_page)
+        from client_panels import Switch
+        switches=pane.call_page.findChildren(Switch)
+        self.assertEqual({w.accessibleName() for w in switches},{'主动文字','主动来电'})
+        self.assertTrue(any('大量 Token' in label.text() for label in pane.call_page.findChildren(QLabel)))
         for width,height in ((960,602),(1280,802),(1600,1000)):
             self.window.resize(width,height); self.app.processEvents()
             self.assertEqual(self.window.overlay.surface.width(),328)
             self.assertEqual(pane.call_page.width(),328)
         self.window.resize(1280,802); self.app.processEvents()
-        self.click(pane.call_rows['call_daily_limit']); self.assertIs(pane.stack.currentWidget(),pane.choice_page)
-        self.click(next(row for row in pane.selection_buttons if row.property('choice')==1))
-        if pane.pending: pane.pending.result(3)
-        self.window.refresh(); self.assertEqual(self.controller.preferences.call_daily_limit,1)
-        self.click(next(w for w in pane.choice_page.findChildren(QPushButton) if w.text()=='‹ 主动来电'))
-        self.assertIs(pane.stack.currentWidget(),pane.call_page)
-        self.click(pane.proactive); self.assertFalse(self.controller.preferences.proactive_calls)
-        self.window.refresh(); self.assertEqual(pane.proactive_row.value.text(),'已关闭')
-        self.click(pane.call_history_row)
-        self.click(next(w for w in pane.call_history_page.findChildren(QPushButton) if w.text()=='‹ 主动来电'))
-        self.assertIs(pane.stack.currentWidget(),pane.call_page)
-        preview=Path(os.environ.get('RONOVA_PREVIEW_DIR',str(CODE/'verification'))); preview.mkdir(parents=True,exist_ok=True)
-        self.window.grab().save(str(preview/'incoming-settings.png'))
+        self.click(pane.proactive_text)
+        self.wait_for(lambda:self.controller.preferences.proactive_text)
+        self.assertFalse(self.controller.preferences.proactive_calls)
+        self.click(pane.proactive_calls)
+        self.wait_for(lambda:self.controller.preferences.proactive_calls)
+        self.click(pane.proactive_text)
+        self.wait_for(lambda:not self.controller.preferences.proactive_text)
+        self.assertTrue(self.controller.preferences.proactive_calls)
         self.click(next(w for w in pane.call_page.findChildren(QPushButton) if w.text()=='‹ 设置'))
         self.assertIs(pane.stack.currentWidget(),pane.root)
-        self.window.grab().save(str(preview/'settings-home.png'))
 
     def test_chat_and_settings_share_clock_battery_signal_and_camera(self):
         QTest.qWait(300)
@@ -366,11 +513,16 @@ class IncomingUiTests(IncomingBase):
             preview=Path(os.environ.get('RONOVA_PREVIEW_DIR',str(CODE/'verification'))); preview.mkdir(parents=True,exist_ok=True)
             self.window.grab().save(str(preview/'chat-status-bar.png'))
 
-    def test_call_displays_voice_preparation_until_local_model_is_ready(self):
-        self.window.open_call(); QTest.qWait(300)
-        self.controller.start_call().result(3)
+    def test_call_waits_for_voice_preparation_before_starting_capture(self):
+        self.window.open_call()
+        self.wait_for(lambda:self.window.screen=='call' and self.window.overlay.phase=='hidden')
+        self.voice.engine='gpt'; self.voice.ready=threading.Event()
         self.voice.preparing=True
+        self.controller.prepare_local_voice()
         self.window.refresh()
+        self.assertFalse(self.window.voice_button.isEnabled())
+        QTest.mouseClick(self.window.voice_button,Qt.MouseButton.LeftButton)
+        self.assertFalse(self.controller.call.active)
         preview=Path(os.environ.get('RONOVA_PREVIEW_DIR',str(CODE/'verification')))
         preview.mkdir(parents=True,exist_ok=True)
         self.window.grab().save(str(preview/'voice-preparation-status.png'))
@@ -378,6 +530,10 @@ class IncomingUiTests(IncomingBase):
             self.window.grab()
             self.assertIn('正在准备语音',[call.args[1] for call in label.call_args_list])
         self.voice.preparing=False
+        self.voice.ready.set()
+        self.window.refresh()
+        self.assertTrue(self.window.voice_button.isEnabled())
+        self.controller.start_call().result(3)
         self.window.refresh()
         with patch.object(self.window,'label') as label:
             self.window.grab()
@@ -385,6 +541,12 @@ class IncomingUiTests(IncomingBase):
 
     def test_voice_call_button_is_green_and_status_follows_chat(self):
         self.window.open_call(); QTest.qWait(300)
+        with patch.object(self.window,'label',wraps=self.window.label) as label:
+            self.window.grab()
+        labels = {call.args[1] for call in label.call_args_list}
+        self.assertIn('等待通话',labels)
+        self.assertIn('--:--',labels)
+        self.assertTrue(labels.isdisjoint(('语音通话','结束通话','文字聊天')))
         for size in ((960,602),(1280,802),(1600,1000)):
             self.window.resize(*size); self.app.processEvents(); image=self.window.grab().toImage(); dpr=self.window.devicePixelRatioF()
             x=round((self.window.offset_x+846*self.window.scale)*dpr); y=round((self.window.offset_y+690*self.window.scale)*dpr)

@@ -11,12 +11,10 @@ import time
 import wave
 
 ROOT = Path(__file__).resolve().parent
-PROJECT = ROOT / "runtime/gpt-sovits"
 TRANSPORT = sys.stdout
 sys.stdout = sys.stderr
 LOCK = threading.Lock()
-THREADS_CONFIGURED = False
-SYNTHESIZE_ON_MAIN_THREAD = False
+SYNTHESIZE_ON_MAIN_THREAD = True
 
 
 def emit(event, job=None, **values):
@@ -25,77 +23,13 @@ def emit(event, job=None, **values):
         TRANSPORT.flush()
 
 
-def initialize(force_cpu=False):
-    global THREADS_CONFIGURED
-    started = time.perf_counter()
-    selection = json.loads((ROOT / "config/voice-selection.json").read_text(encoding="utf-8"))
-    version = selection["version"]
-    if version != "v2ProPlus":
-        raise ValueError("Unsupported local voice model selection")
-    weights = "GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth"
-    if not (PROJECT / weights).is_file():
-        raise FileNotFoundError(f"Voice weight missing: {weights}")
-    cache = ROOT / "runtime/chat-voice-cache"
-    cache.mkdir(parents=True, exist_ok=True)
-    os.environ.update({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "OMP_NUM_THREADS": "6",
-                       "language": "zh_CN", "version": version, "MPLCONFIGDIR": str(ROOT / "runtime/matplotlib-cache"),
-                       "NLTK_DATA": str(ROOT / "runtime/gpt-nltk-data"),
-                       "TEMP": str(cache), "TMP": str(cache), "TOKENIZERS_PARALLELISM": "false",
-                       "HF_HOME": str(cache / "huggingface"),
-                       "TORCH_HOME": str(cache / "torch"),
-                       "TORCH_EXTENSIONS_DIR": str(cache / "torch-extensions"),
-                       "TORCHINDUCTOR_CACHE_DIR": str(cache / "torchinductor"),
-                       "NUMBA_CACHE_DIR": str(cache / "numba")})
-    os.environ["PATH"] = str(PROJECT) + os.pathsep + os.environ["PATH"]
-    os.chdir(PROJECT)
-    sys.path[:0] = [str(PROJECT), str(PROJECT / "GPT_SoVITS")]
-    emit("status", message="正在准备本地语音运行库")
-    import torch
-    if not THREADS_CONFIGURED:
-        torch.set_num_threads(6)
-        torch.set_num_interop_threads(2)
-        THREADS_CONFIGURED = True
-    import jieba
-    import jieba.posseg
-    jieba.dt.tmp_dir = str(cache)
-    sys.modules["jieba_fast"] = jieba
-    sys.modules["jieba_fast.posseg"] = jieba.posseg
-    from TTS_infer_pack.TTS import TTS
-    from voice_acceleration import inference_device
-    requested = 'cpu' if force_cpu else os.environ.get('RONOVA_VOICE_DEVICE', selection.get('device', 'auto'))
-    acceleration = inference_device(torch, requested)
-    cpu_threads = int(os.environ.get('RONOVA_VOICE_THREADS', '6'))
-    if not 1 <= cpu_threads <= 16:
-        raise ValueError('本地语音线程数必须在 1–16 之间')
-    torch.set_num_threads(cpu_threads)
-    acceleration['cpu_threads'] = cpu_threads
-    if acceleration['device'] == 'cuda' and os.environ.get('RONOVA_VOICE_HALF') == '0':
-        acceleration['is_half'] = False
-    mode = '显卡' if acceleration['device'] == 'cuda' else 'CPU'
-    emit("status", message=f"正在使用{mode}加载角色音色并静默预热")
-    model = TTS({"custom": {
-        "device": acceleration['device'], "is_half": acceleration['is_half'], "version": version,
-        "t2s_weights_path": "GPT_SoVITS/pretrained_models/s1v3.ckpt",
-        "vits_weights_path": weights,
-        "bert_base_path": "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large",
-        "cnhuhbert_base_path": "GPT_SoVITS/pretrained_models/chinese-hubert-base"}})
-    if model.configs.version != version:
-        raise RuntimeError("Loaded voice model does not match the requested version")
-    from voice_features import ReferenceSpeakerCache
-    speaker_cache = ReferenceSpeakerCache(model.sv_model.compute_embedding3)
-    model.sv_model.compute_embedding3 = speaker_cache
-    model.reference_speaker_cache = speaker_cache
-    refs = json.loads((ROOT / "voice-reference/prepared/references.json").read_text(encoding="utf-8"))
-    reference = next(ref for ref in refs["references"] if ref["id"] == selection.get("reference_id", "A"))
-    return model, reference, time.perf_counter() - started, acceleration
+# IndexTTS owns model loading; this module provides its cancellable job protocol.
+from index_voice_backend import initialize
 
 
 def parameters(reference, text):
-    return {"text": text, "text_lang": "all_zh", "ref_audio_path": str(ROOT / reference["path"]),
-            "prompt_text": reference["text"], "prompt_lang": "all_zh", "top_k": 15, "top_p": 1,
-            "temperature": 1, "text_split_method": "cut5", "batch_size": 1, "speed_factor": 1,
-            "fragment_interval": .12, "seed": 20261003, "parallel_infer": True,
-            "repetition_penalty": 1.35, "return_fragment": True, "streaming_mode": False}
+    return {"text": text, "ref_audio_path": str(ROOT / reference["path"]),
+            "reference_max_seconds": max(15, float(reference.get("seconds", 15)))}
 
 
 def main():
@@ -146,7 +80,7 @@ def main():
              **acceleration,
              model_version=model.configs.version, vits_weights_path=model.configs.vits_weights_path,
              engine="gpt", reference_id=reference["id"], reference_audio=reference["path"],
-             reference_warmup=True, reference_speaker_cache=True,
+             reference_warmup=True, reference_speaker_cache=getattr(model, 'sv_model', None) is not None,
              speaker_cache_hits=speaker_cache.hits, speaker_cache_misses=speaker_cache.misses)
     except Exception as exc:
         # Startup tracebacks contain local model paths, never chat or keys.

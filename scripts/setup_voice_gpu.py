@@ -5,9 +5,10 @@ import json
 import os
 from pathlib import Path
 import re
-import struct
 import subprocess
 import sys
+
+from setup_desktop import require_base_python
 
 ROOT = Path(__file__).resolve().parents[1]
 WHEELS = ROOT / 'runtime/wheelhouse-cuda'
@@ -24,8 +25,7 @@ def main():
     parser.add_argument('--download', action='store_true', help='Explicitly download official CUDA wheels.')
     parser.add_argument('--reinstall', action='store_true')
     args = parser.parse_args()
-    if os.name != 'nt' or sys.version_info[:2] != (3, 11) or struct.calcsize('P') != 8:
-        raise RuntimeError('Please use the bundled Windows x64 Python 3.11 runtime.')
+    require_base_python()
     os.environ.update(PYTHONNOUSERSITE='1', PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='1',
                       PIP_DISABLE_PIP_VERSION_CHECK='1')
     if args.download:

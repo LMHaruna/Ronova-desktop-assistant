@@ -98,7 +98,7 @@ def main():
             canvas=QImage(1280,429*((len(states)+1)//2),QImage.Format.Format_ARGB32_Premultiplied)
             canvas.fill(QColor('#111216'))
             painter=QPainter(canvas); painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-            font=QFont('Microsoft YaHei UI'); font.setPixelSize(17); painter.setFont(font)
+            font=QFont(); font.setPixelSize(17); painter.setFont(font)
             for index,(stage,score,label) in enumerate(states):
                 x=(index%2)*640; y=(index//2)*429
                 painter.setPen(QColor('#F5F5F7'))

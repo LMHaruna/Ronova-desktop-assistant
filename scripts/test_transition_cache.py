@@ -32,7 +32,7 @@ class TransitionCacheTests(ProviderUI):
         for screen in ('home','call','home','call'):
             window.set_screen(screen); cache=window.scene_cache()
             expected=QPixmap(cache.size()); expected.setDevicePixelRatio(cache.devicePixelRatio())
-            expected.fill(QColor(window.colors['background']))
+            expected.fill(QColor(window.colors['callBackdrop' if screen=='call' else 'background']))
             painter=QPainter(expected); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             painter.translate(window.offset_x,window.offset_y); painter.scale(window.scale,window.scale)

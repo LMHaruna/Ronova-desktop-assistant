@@ -33,10 +33,10 @@ class VideoTests(unittest.TestCase):
         try:
             deadline=time.monotonic()+15
             while not scene.finished() and time.monotonic()<deadline:
-                scene.advance(16); time.sleep(.005); self.app.processEvents()
+                scene.advance(scene.assets.duration); time.sleep(.005); self.app.processEvents()
                 self.assertLessEqual(scene.decoder.frames.qsize(),12)
             self.assertTrue(scene.finished(),f'{scene.error}; decoded={scene.decoder.decoded}; index={scene.last_index}; done={scene.decoder.done.is_set()}; queue={scene.decoder.frames.qsize()}')
-            self.assertEqual(scene.decoder.decoded,384)
+            self.assertEqual(scene.decoder.decoded,scene.assets.frame_count)
             self.assertTrue(scene.ready)
         finally: scene.stop()
 
@@ -60,16 +60,16 @@ class VideoTests(unittest.TestCase):
             def close(self): self.handle=False
         assets=OathVideoAssets()
         sound=OathSound((assets.audio,),(0,),enabled=True,volume=.37,device=3,
-                        player_factory=Player,duration=16,end_padding_seconds=0)
+                        player_factory=Player,duration=assets.duration,end_padding_seconds=0)
         sound.start(); self.assertTrue(entered.wait(1))
         try:
             with sound.lock: sound.player.frames=24000*7
             self.assertEqual(sound.position(),7)
-            self.assertEqual(settings['file'],'narration.wav')
+            self.assertEqual(settings['file'],'ceremony-audio.wav')
             self.assertEqual(settings['volume'],.37); self.assertEqual(settings['device'],3)
             self.assertEqual(settings['end_padding_seconds'],0)
             self.assertFalse(sound.finished())
-            release.set(); self.assertTrue(sound.done.wait(1)); self.assertEqual(sound.position(),16)
+            release.set(); self.assertTrue(sound.done.wait(1)); self.assertEqual(sound.position(),assets.duration)
         finally: sound.stop(); release.set()
 
     def test_muted_clock_runs_without_creating_player(self):
@@ -79,12 +79,12 @@ class VideoTests(unittest.TestCase):
         sound.start(); sound.started-=3
         self.assertGreaterEqual(sound.position(),3); self.assertTrue(sound.finished()); factory.assert_not_called()
 
-    def test_audio_failure_uses_wall_clock_and_subtitle_fallback(self):
+    def test_audio_failure_uses_wall_clock_and_keeps_video_playing(self):
         def fail(*args,**kwargs): raise OSError('fixture device failure')
         sound=OathSound(('mixed.wav',),(0,),enabled=True,volume=1,device=None,
                         player_factory=fail,duration=16)
         sound.start(); self.assertTrue(sound.done.wait(1)); sound.started-=3
-        self.assertGreaterEqual(sound.position(),3); self.assertIn('字幕继续',sound.error)
+        self.assertGreaterEqual(sound.position(),3); self.assertIn('动画将继续',sound.error)
 
 
 class VideoUiTests(OathUiTests):
@@ -96,7 +96,7 @@ class VideoUiTests(OathUiTests):
     def test_natural_save_waits_for_video_eof_even_after_audio(self):
         dialog=self.start_ui(); dialog.started=time.monotonic()-17
         dialog.sound.started=dialog.started; self.controller.oath_session['started']=dialog.started
-        with patch.object(dialog.sound,'position',return_value=16), \
+        with patch.object(dialog.sound,'position',return_value=dialog.assets.duration), \
              patch.object(dialog.scene,'finished',return_value=False):
             dialog.refresh(); self.assertFalse(self.controller.memory.profile()['oath_completed'])
 

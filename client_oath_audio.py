@@ -1,4 +1,4 @@
-"""Play three cached lines without invoking a model or opening a microphone."""
+"""Play local ceremony audio through the configured Windows output device."""
 from pathlib import Path
 import threading
 import time
@@ -42,7 +42,7 @@ class OathSound:
                     with self.lock: self.player=None
                 if self.cancelled.is_set(): return
         except Exception:
-            self.error='声音暂不可用，仪式将按字幕继续。'
+            self.error='声音暂不可用，动画将继续播放。'
         finally:
             self.done.set()
 
@@ -71,5 +71,5 @@ class OathSound:
                             self.last_position=min(self.duration,max(0.0,
                                 player._device_position()/player.rate))
                 except (OSError,ValueError):
-                    self.error='声音暂不可用，仪式将按字幕继续。'
+                    self.error='声音暂不可用，动画将继续播放。'
         return self.last_position

@@ -19,6 +19,8 @@ from client_app import ClientWindow
 from client_controller import DesktopController
 from client_fixtures import FakeCall,fake_router
 from client_store import Preferences
+from client_theme import COLORS
+from qwen_tts_next import TTS_NEXT
 
 
 class ChatUiTests(unittest.TestCase):
@@ -123,7 +125,7 @@ class ChatUiTests(unittest.TestCase):
         self.until(lambda:picker.foldout.get_reveal()==1)
         self.assertEqual(draft.text(),'unchanged-offline-draft')
 
-    def test_click_voice_option_saves_once_closes_and_preserves_other_provider(self):
+    def test_click_selected_voice_option_closes_without_reloading_model(self):
         pane=self.models();picker=pane.model_tts_combos['gpt']
         other=self.controller.preferences.deepseek_tts_engine
         with patch.object(self.controller,'set_tts_engine',wraps=self.controller.set_tts_engine) as save:
@@ -132,12 +134,50 @@ class ChatUiTests(unittest.TestCase):
             QTest.mouseClick(picker.options[0],Qt.MouseButton.LeftButton)
             self.pending(pane)
             self.until(lambda:not picker.foldout.isVisible())
-            save.assert_called_once_with('gpt','indextts-2.5')
+            save.assert_not_called()
         self.assertEqual(picker.currentData(),'indextts-2.5')
         self.assertEqual(Preferences.load(self.controller.preferences_path).gpt_tts_engine,'indextts-2.5')
         self.assertEqual(self.controller.preferences.deepseek_tts_engine,other)
         self.assertEqual(self.chat.calls,0)
         self.capture('tts-selected-gray-link.png')
+
+    def test_tts_next_opens_its_key_under_each_text_model_and_saves_in_place(self):
+        pane = self.models()
+        def choose(engine, voice):
+            picker = pane.model_tts_combos[engine]
+            QTest.mouseClick(picker.header,Qt.MouseButton.LeftButton)
+            self.until(lambda:picker.foldout.form.isVisible() and picker.foldout.get_reveal()==1)
+            QTest.mouseClick(picker.options[picker.findData(voice)],Qt.MouseButton.LeftButton)
+            self.until(lambda:not picker.foldout.isVisible())
+
+        gpt = pane.tts_next_forms['gpt']
+        self.assertFalse(gpt.isVisible())
+        choose('gpt',TTS_NEXT)
+        self.until(gpt.api_key.isVisible)
+        self.assertEqual(pane.expanded_model,'gpt')
+        self.assertEqual(self.controller.preferences.gpt_tts_engine,'indextts-2.5')
+        gpt.api_key.clear(); gpt.save.click(); self.pending(pane)
+        self.assertTrue(gpt.api_key.isVisible())
+        self.assertEqual(self.controller.preferences.gpt_tts_engine,'indextts-2.5')
+        gpt.api_key.setText('inline-fixture-key'); gpt.save.click(); self.pending(pane)
+        self.assertEqual(self.controller.preferences.gpt_tts_engine,TTS_NEXT)
+        self.assertEqual(self.controller.models.snapshot()[TTS_NEXT].api_key,'inline-fixture-key')
+        self.assertEqual(self.controller.preferences.deepseek_tts_engine,'indextts-2.5')
+        self.capture('tts-next-inline.png')
+
+        self.router.factories['deepseek'] = lambda:fake_router()[0].backends['gpt']
+        pane.select_model('deepseek'); self.pending(pane)
+        self.until(lambda:pane.model_details['deepseek'].form.isVisible() and
+                          pane.model_details['deepseek'].get_reveal()==1)
+        deepseek = pane.tts_next_forms['deepseek']
+        self.assertFalse(deepseek.isVisible())
+        choose('deepseek',TTS_NEXT)
+        self.until(deepseek.api_key.isVisible)
+        self.assertEqual(deepseek.api_key.text(),'inline-fixture-key')
+        choose('deepseek','indextts-2.5')
+        self.until(lambda:not deepseek.isVisible())
+        self.assertEqual(pane.expanded_model,'deepseek')
+        self.assertEqual(self.controller.preferences.deepseek_tts_engine,'indextts-2.5')
 
     def test_gray_api_links_open_their_exact_webpages_on_a_click(self):
         pane=self.models()
@@ -148,7 +188,7 @@ class ChatUiTests(unittest.TestCase):
             for name,detail in pane.model_details.items():detail.animate(name==engine)
             self.settle(420)
             link=pane.model_key_links[engine]
-            self.assertIn('color:#89919C',link.text())
+            self.assertIn(f"color:{COLORS['muted']}",link.text())
             doc=QTextDocument();doc.setDocumentMargin(0);doc.setDefaultFont(link.font())
             doc.setHtml(link.text());doc.setTextWidth(link.contentsRect().width())
             point=None

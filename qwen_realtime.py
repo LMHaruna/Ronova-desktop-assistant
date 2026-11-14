@@ -13,6 +13,9 @@ from chat_client import ChatClient, ChatError, ChatCancelled
 from role_prompt import SYSTEM_PROMPT
 
 MODEL = "qwen-audio-3.1-realtime-plus"
+FLASH_MODEL = 'qwen-audio-3.1-realtime-flash'
+FLASH_URL = 'wss://maas.qianwenaiapi.com/api-ws/v1/realtime'
+REALTIME_ENGINES = ('qwen', 'qwen_flash')
 ROOT = Path(__file__).resolve().parent
 VOICE_INSTRUCTIONS = ('语音表达保持从容、冷静、克制，带一点高傲和距离感。'
                       '语速平稳，音高变化适度，句尾自然收稳；关心时温和但笃定，'
@@ -73,7 +76,7 @@ class RealtimeConfig:
             raise ChatError('实时接口 URL 仅允许 model 查询参数，密钥须放环境变量')
         if query and query[0][1] != self.model:
             raise ChatError('实时接口 URL 中的 model 与模型名字不一致')
-        if not self.voice or any(char in self.voice for char in '\r\n'):
+        if (not self.voice and self.model != FLASH_MODEL) or any(char in self.voice for char in '\r\n'):
             raise ChatError('实时音色配置无效')
         if self.voice_target_model and self.voice_target_model != self.model:
             raise ChatError('若娜瓦复刻音色绑定 ' + self.voice_target_model + '，请使用兼容的模型名字')
@@ -90,7 +93,9 @@ class RealtimeConfig:
         self.endpoint()
         key = self.key()
         if not key or len(key)>4096 or any(c.isspace() for c in key):
-            raise ChatError('请在对话模型设置中填写千问 API Key，或配置 DASHSCOPE_API_KEY')
+            raise ChatError('请在大模型设置中填写千问 API Key，或配置 DASHSCOPE_API_KEY')
+        if self.model == FLASH_MODEL and not self.voice.startswith(FLASH_MODEL + '-'):
+            raise ChatError('请在大模型设置中保存实时 Flash 的 API Key，以创建若娜瓦音色')
 
 
 def connect(config):
@@ -180,6 +185,8 @@ class QwenRealtime(ChatClient):
                         description = ' '.join(str(details.get(key, '')) for key in ('code', 'message')).lower()
                         if ('voice' in description or '音色' in description) and any(
                                 term in description for term in ('not found', 'not exist', 'does not exist', 'invalid', '不存在', '无效')):
+                            if config.model == FLASH_MODEL:
+                                raise ChatError('实时 Flash 的若娜瓦音色尚未就绪或当前 API Key 无法使用，请在大模型设置中检查 API Key')
                             raise ChatError('当前 API Key 无法使用配置的音色；请在 config/realtime-voice.json 中填写该账号可用的音色编号，或使用内置音色。')
                     raise ChatError('实时语音服务返回错误，请核对模型权限、音色和配置')
                 return event

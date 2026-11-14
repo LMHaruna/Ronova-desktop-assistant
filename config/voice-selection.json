@@ -1,8 +1,8 @@
 {
-  "engine": "GPT-SoVITS",
-  "version": "v2ProPlus",
-  "reference_id": "C",
-  "reference_audio": "voice-reference/prepared/C.wav",
+  "engine": "IndexTTS",
+  "version": "indextts-2.5",
+  "reference_id": "recording2-0-20",
+  "reference_audio": "voice-reference/prepared/indextts-primary-20s.wav",
   "device": "auto",
   "pronunciation_rules": [
     {
@@ -15,5 +15,6 @@
     }
   ],
   "default_backend": "qwen",
-  "default_model": "qwen-audio-3.1-realtime-plus"
+  "default_model": "qwen-audio-3.1-realtime-plus",
+  "reference_label": "录音（2）· 前20秒"
 }

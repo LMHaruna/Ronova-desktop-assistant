@@ -2,14 +2,17 @@
 from pathlib import Path
 import hashlib
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from PIL import Image, ImageFilter
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 from PySide6.QtSvg import QSvgRenderer
+from client_fonts import scaled_size
 
 # User-approved revision: a solid black body and a six-pixel screen bezel.
 PHONE_BODY = (800,79,340,709)
+PHONE_BODY_RADIUS = 50
 PHONE_SCREEN = (806,85,328,697)
 PHONE_SCREEN_RADIUS = 44
 CHAT_PANEL = PHONE_SCREEN
@@ -24,18 +27,18 @@ SLOTS = {
  'imgCallIdleBlurV10':(0,0,1280,802), 'imgVector':(0,0,1280,64),
  'imgVector1':(1160,12,86,40), 'imgVector2':(1175.1,23.1,17.8,17.8),
  'imgVector3':(1181.44,29.43,5.19995,5.2), 'imgVector4':(0,64,1280,738),
- 'imgVector5':(710,87,520,520), 'imgVector6':(800,79,340,709),
- 'imgVector7':(808,87,324,693), 'imgVector8':(814,93,312,681),
+ 'imgVector5':(710,87,520,520),
+ 'imgVector8':(814,93,312,681),
  'imgVector9':(785,127,370,370), 'imgVector10':(918,93,104,25),
  'imgVector11':(1009.15,103.22,5.59998,5.60001),
- 'imgVector12':(1069.1,105,17.7,8.7), 'imgVector13':(1076.48,114.53,3,3),
- 'imgVector14':(1092.28,103.24,26.5,14.5), 'imgVector15':(1096.06,106.99,18,7),
+
+
  'imgVector16':(871.04,194.97,198,198), 'imgVector17':(882.05,206.03,176,176),
  'imgVector18':(881.05,205.03,178,178), 'imgVector19':(878.98,478,182,61),
- 'imgVector20':(836,660,60,60), 'imgVector21':(859.63,673.43,12.3,21.3),
- 'imgVector22':(853.89,686.74,24.3001,20.3001), 'imgVector23':(940,660,60,60),
- 'imgVector24':(954.89,684.57,30.3001,14.55), 'imgVector25':(1060,671,29.3,35.3),
- 'imgVector26':(1066.5,684.507,3,3), 'imgVector27':(927,763,86,4),
+
+
+
+ 'imgVector27':(927,763,86,4),
  'imgPortraitFrom161923V41':(-1.106,0,597,739.431),
 }
 
@@ -75,6 +78,16 @@ def paint_call_control(painter, key, x, amount, muted=False):
         path.quadTo(11,6,10,5); path.lineTo(6,3); path.lineTo(6,-1)
         path.quadTo(0,-3,-6,-1); path.lineTo(-6,3); path.lineTo(-10,5)
         path.quadTo(-11,6,-12,5); path.closeSubpath(); painter.drawPath(path)
+    elif key=='speaker':
+        path=QPainterPath(); path.moveTo(-10,-4); path.lineTo(-5,-4); path.lineTo(1,-9)
+        path.lineTo(1,9); path.lineTo(-5,4); path.lineTo(-10,4); path.closeSubpath()
+        painter.drawPath(path)
+        if muted:
+            painter.drawLine(QPointF(5,-3),QPointF(10,3))
+            painter.drawLine(QPointF(10,-3),QPointF(5,3))
+        else:
+            painter.drawArc(QRectF(-3,-6,11,12),-55*16,110*16)
+            painter.drawArc(QRectF(-5,-10,17,20),-54*16,108*16)
     elif key=='later':
         painter.drawEllipse(QRectF(-12,-12,24,24))
         painter.drawLine(QPointF(0,-7),QPointF(0,1)); painter.drawLine(QPointF(0,1),QPointF(6,4))
@@ -89,6 +102,10 @@ def paint_call_control(painter, key, x, amount, muted=False):
     painter.restore()
 
 
+class SceneAssetError(RuntimeError):
+    """Asset failures that can safely identify the file in a startup dialog."""
+
+
 class SceneAssets:
     def __init__(self, root):
         self.path = Path(root)/'design/client-assets'
@@ -97,19 +114,19 @@ class SceneAssets:
         for asset in self.manifest['assets']:
             path = self.path/asset['file']
             if not path.is_file() or path.stat().st_size == 0 or hashlib.sha256(path.read_bytes()).hexdigest()!=asset['sha256']:
-                raise RuntimeError('界面素材缺失或校验失败：'+asset['file'])
+                raise SceneAssetError('界面素材缺失或校验失败：'+asset['file'])
             if asset['file'].endswith('.svg'):
                 renderer = QSvgRenderer(str(path))
-                if not renderer.isValid(): raise RuntimeError('界面矢量素材无法读取')
+                if not renderer.isValid(): raise SceneAssetError('界面矢量素材无法读取：'+asset['file'])
                 self.svgs[asset['name']] = renderer
         files={asset['name']:asset['file'] for asset in self.manifest['assets']}
         mapping=self.manifest.get('relationship_portraits',{'acquaintance':'imgPortraitFrom161923V42'})
-        if 'acquaintance' not in mapping: raise RuntimeError('缺少相识立绘')
+        if 'acquaintance' not in mapping: raise SceneAssetError('缺少相识立绘')
         self.portrait_sources={}
         self.portraits={}
         for stage,name in mapping.items():
             if stage not in ('acquaintance','familiar','close','bond','angry') or name not in files:
-                raise RuntimeError('立绘状态配置无效')
+                raise SceneAssetError('立绘状态配置无效')
             path=self.path/files[name]
             self.portrait_sources[stage]=path
             self.portraits[stage]=self._portrait_layer(path,stage=='acquaintance',stage in ('familiar','close','bond'),
@@ -117,12 +134,22 @@ class SceneAssets:
         self.stage='acquaintance'
         self.background=self.portraits[self.stage]['background']
         self.foreground=self.portraits[self.stage]['foreground']
-        self.avatar = pil_pixmap(Image.open(self.path/files['imgAvatarRonovaOfficial']).resize(
-            (144,144),Image.Resampling.LANCZOS))
+        self._avatar_image = Image.open(self.path/files['imgAvatarRonovaOfficial']).convert('RGBA')
+        self.avatar = pil_pixmap(self._avatar_image)
+        self._avatar_sizes = {}
         self.geometries = {**SLOTS,'imgPortraitFrom161923V42':[(334,-304,1200,1499),(30.08,63.57,596,745)],
                            'imgAvatarRonovaOfficial':(898,222,144,144),
                            'phone_body':PHONE_BODY,'phone_screen':PHONE_SCREEN,
                            'phone_bezel':{'width':6,'color':'#040506'}}
+
+    def avatar_pixmap(self, pixel_size):
+        """Downsample once from the original at the actual painted resolution."""
+        size=min(self._avatar_image.width,max(1,math.ceil(pixel_size)))
+        if size not in self._avatar_sizes:
+            if len(self._avatar_sizes)>=32:
+                self._avatar_sizes.pop(next(iter(self._avatar_sizes)))
+            self._avatar_sizes[size]=pil_pixmap(self._avatar_image.resize((size,size),Image.Resampling.LANCZOS))
+        return self._avatar_sizes[size]
 
     def _portrait_layer(self, path, original=False, suppress_background_overlap=False, portrait_height=None):
         """Prepare native display effects once; never alter the source PNG."""
@@ -224,7 +251,7 @@ class SceneAssets:
         painter.drawArc(QRectF(1067,104,20,15),35*16,110*16)
         painter.drawArc(QRectF(1071,108,12,9),35*16,110*16)
         painter.drawPoint(QPointF(1077,115))
-        font=QFont('Segoe UI'); font.setPixelSize(12); font.setBold(True); painter.setFont(font)
+        font=QFont(); font.setPixelSize(scaled_size(13)); painter.setFont(font)
         painter.drawText(QRectF(835,104,70,22),phone_clock())
         painter.restore()
 
@@ -233,19 +260,20 @@ class SceneAssets:
         self.paint_dynamic(painter,motion,feedback,muted)
         self.paint_phone_header(painter)
 
-    def paint_static(self,painter,phone=True):
+    def paint_static(self,painter,phone=True,*,companion=False):
         """One relationship state's reusable portrait, background and phone."""
-        self.svg(painter,'imgCallIdleBlurV10')
-        self.svg(painter,'imgVector4')
-        painter.drawPixmap(334,-304,self.background)
-        # Keep the ambient portrait layer below the solid title bar.
-        self.svg(painter,'imgVector')
-        painter.drawPixmap(QPointF(30.08,63.57),self.foreground)
-        for name in ['imgVector1','imgVector2','imgVector3']:
-            self.svg(painter,name)
-        if phone: self.svg(painter,'imgVector5')
+        if not companion:
+            self.svg(painter,'imgCallIdleBlurV10')
+            self.svg(painter,'imgVector4')
+            painter.drawPixmap(334,-304,self.background)
+            # Keep the ambient portrait layer below the solid title bar.
+            self.svg(painter,'imgVector')
+            painter.drawPixmap(QPointF(30.08,63.57),self.foreground)
+            for name in ['imgVector1','imgVector2','imgVector3']:
+                self.svg(painter,name)
+        if phone and not companion: self.svg(painter,'imgVector5')
         painter.setBrush(QColor('#040506')); painter.setPen(QPen(QColor('#36393C'),1))
-        painter.drawRoundedRect(QRectF(*PHONE_BODY),50,50)
+        painter.drawRoundedRect(QRectF(*PHONE_BODY),PHONE_BODY_RADIUS,PHONE_BODY_RADIUS)
         if not phone: return
         painter.save()
         screen = QPainterPath(); screen.addRoundedRect(QRectF(*PHONE_SCREEN),PHONE_SCREEN_RADIUS,PHONE_SCREEN_RADIUS)
@@ -255,14 +283,34 @@ class SceneAssets:
         self.svg(painter,'imgVector27')
         painter.restore()
 
-    def paint_dynamic(self,painter,motion=None,feedback=None,muted=False,incoming=False):
+    def paint_video(self, painter, frame):
+        rect = QRectF(*PHONE_SCREEN)
+        painter.save()
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, PHONE_SCREEN_RADIUS, PHONE_SCREEN_RADIUS)
+        painter.setClipPath(clip, Qt.ClipOperation.IntersectClip)
+        painter.fillRect(rect, QColor('#101116'))
+        if frame is not None:
+            scale = max(rect.width()/frame.width(), rect.height()/frame.height())
+            size = rect.size()/scale
+            source = QRectF(0,0,size.width(),size.height())
+            source.moveCenter(QRectF(frame.rect()).center())
+            painter.drawImage(rect, frame, source)
+        shade = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        for position, alpha in ((0,165),(.19,115),(.29,0),(.69,0),(1,180)):
+            shade.setColorAt(position, QColor(6,7,12,alpha))
+        painter.fillRect(rect, shade)
+        self.svg(painter,'imgVector27')
+        painter.restore()
+
+    def paint_dynamic(self,painter,motion=None,feedback=None,muted=False,incoming=False,speaker=None,video=False):
         feedback=feedback or {}
         painter.save()
         screen = QPainterPath(); screen.addRoundedRect(QRectF(*PHONE_SCREEN),PHONE_SCREEN_RADIUS,PHONE_SCREEN_RADIUS)
         painter.setClipPath(screen,Qt.ClipOperation.IntersectClip)
-        if motion is not None:
+        if not video and motion is not None:
             motion.paint(painter,self.avatar,QRectF(898,222,144,144))
-        else:
+        elif not video:
             painter.save()
             clip = QPainterPath(); clip.addEllipse(QRectF(898,222,144,144))
             painter.setClipPath(clip,Qt.ClipOperation.IntersectClip)
@@ -270,5 +318,6 @@ class SceneAssets:
             painter.restore()
         for key,x in (('voice',836),('end',940),('text',1044)):
             icon='answer' if incoming and key=='voice' else 'later' if incoming and key=='text' else key
-            paint_call_control(painter,icon,x,feedback.get(key,0),muted)
+            if icon=='text' and speaker is not None: icon='speaker'
+            paint_call_control(painter,icon,x,feedback.get(key,0),speaker if icon=='speaker' else muted)
         painter.restore()

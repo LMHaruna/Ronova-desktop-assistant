@@ -11,6 +11,7 @@ from PySide6.QtTest import QTest
 from client_controller import DesktopController
 from client_fixtures import FakeCall, fake_router
 from client_panels import ReplyActionButton
+from client_theme import COLORS
 from test_model_providers import ProviderUI
 
 
@@ -27,15 +28,22 @@ class UiUpdateTests(ProviderUI):
             if pane.pending: pane.pending.result(3)
             QTest.qWait(150); self.app.processEvents()
             self.assertEqual(self.controller.preferences.call_mode,mode)
-            self.assertEqual(pane.mode.value.text(),label)
+            pane.choose('call_mode','通话方式'); self.app.processEvents()
+            self.assertEqual([row.property('choice') for row in pane.selection_buttons
+                              if row.value.text()=='✓'],[mode])
             from client_store import Preferences
             self.assertEqual(Preferences.load(self.controller.preferences_path).call_mode,mode)
         directory=Path(os.environ['RONOVA_PREVIEW_DIR']); directory.mkdir(parents=True,exist_ok=True)
         self.assertTrue(self.window.grab().save(str(directory/'call-modes-two.png')))
         pane.choose_models(); QTest.qWait(150)
+        from PySide6.QtWidgets import QLabel
         for row in pane.model_rows:
-            if row.property('choice')=='qwen': self.assertNotIn('独立显卡',row.subtitle.text())
-            else: self.assertIn('需要 NVIDIA 独立显卡',row.subtitle.text())
+            engine=row.property('choice')
+            self.assertEqual([label.text() for label in row.findChildren(QLabel) if label.text() and label is not row.value],
+                             [self.controller.models.snapshot()[engine].model])
+            description=pane.model_details[engine].form.findChild(QLabel,'modelDescription')
+            if engine in ('qwen','qwen_flash'): self.assertNotIn('独立显卡',description.text())
+            else: self.assertIn('需要 NVIDIA 独立显卡',description.text())
         pane.select_model('gpt')
         if pane.pending: pane.pending.result(3)
         QTest.qWait(450); self.app.processEvents()
@@ -49,7 +57,7 @@ class UiUpdateTests(ProviderUI):
             rail,label,fill=meter.layout_geometry()
             self.assertGreater(label.left(),rail.right())
             self.assertGreaterEqual(label.top(),0); self.assertLessEqual(label.bottom(),meter.height())
-            color='#a989b9' if score<0 else '#d93652' if score else '#d8d1d4'
+            color=COLORS['disabled' if score < 0 else 'gray' if score else 'border'].lower()
             points=[(x,y) for x in range(math.ceil(label.left()*dpr),capture.width())
                     for y in range(capture.height()) if capture.pixelColor(x,y).name()==color]
             self.assertTrue(points,f'number is missing or clipped at {score}')
@@ -67,7 +75,7 @@ class UiUpdateTests(ProviderUI):
                 button.setEnabled(enabled); button.show(); self.app.processEvents()
                 try:
                     capture=button.grab().toImage(); dpr=button.devicePixelRatioF()
-                    color='#687487' if enabled else '#bbc2cc'
+                    color=COLORS['muted' if enabled else 'disabled'].lower()
                     points=[(x,y) for x in range(capture.width()) for y in range(capture.height())
                             if capture.pixelColor(x,y).name()==color]
                     self.assertTrue(points)

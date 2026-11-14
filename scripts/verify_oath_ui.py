@@ -53,7 +53,6 @@ def main():
                     wait(lambda:dialog.started is not None)
                     assert begin.call_count==1
                     assert dialog.replay==bool(index)
-                    assert dialog.caption.mode=='play' and not dialog.caption.visible_text
                     assert dialog.primary.text()=='跳过动画'
                     assert dialog.secondary.text()=='取消仪式'
                     assert dialog.grab().save(str(output/f'direct-playing-{width}.png'))
@@ -62,7 +61,7 @@ def main():
                         assert dialog.rect().contains(box)
                         assert (button.width(),button.height())==(96,36)
                     saved=set(); decoded=0; last_frame=0; deadline=time.monotonic()+24
-                    points=(('invitation',3.5),('contact',8.6),('hold',14.5))
+                    points=(('early',3.5),('middle',8.6),('late',14.5))
                     loop=QEventLoop(); timer=QTimer(); playback_errors=[]
                     def tick():
                         nonlocal decoded,last_frame
@@ -87,7 +86,7 @@ def main():
                     assert not dialog.isVisible() and dialog.finished_ceremony
                     assert begin.call_count==1
                 assert saved=={name for name,_ in points}|{'completed'}
-                assert decoded==384 and last_frame==383
+                assert decoded==dialog.assets.frame_count and last_frame==decoded-1
                 profile=controller.memory.profile()
                 assert profile['affinity']==100 and profile['stage']=='bond'
                 assert not controller.snapshot()['oath_active']

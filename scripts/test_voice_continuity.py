@@ -1,4 +1,4 @@
-"""Offline checks for immediate speech, reference reuse and drained PCM tails."""
+"""Offline checks for immediate speech and drained PCM tails."""
 from pathlib import Path
 import ctypes
 import io
@@ -14,43 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_voice import LocalVoice, SpeechJob, ROOT
 from reply_pipeline import ReplyPipeline, SentenceBuffer
 from pcm_player import PCMPlayer
-from voice_features import ReferenceSpeakerCache
-
-
-class ReferenceFeatureTests(unittest.TestCase):
-    class Waveform:
-        def __init__(self, voice):
-            self.voice = voice
-            self._version = 0
-
-    def test_unchanged_reference_reuses_embedding_without_new_work(self):
-        compute = Mock(side_effect=lambda wav: wav.voice)
-        cache = ReferenceSpeakerCache(compute)
-        waveform = self.Waveform('reference A')
-        self.assertEqual(cache(waveform), 'reference A')
-        self.assertEqual(cache(waveform), 'reference A')
-        compute.assert_called_once_with(waveform)
-        self.assertEqual((cache.hits, cache.misses), (1, 1))
-
-    def test_replacement_or_in_place_edit_never_reuses_old_voice(self):
-        cache = ReferenceSpeakerCache(lambda wav: wav.voice)
-        waveform = self.Waveform('reference A')
-        self.assertEqual(cache(waveform), 'reference A')
-        waveform.voice = 'edited reference A'
-        waveform._version += 1
-        self.assertEqual(cache(waveform), 'edited reference A')
-        self.assertEqual(cache(self.Waveform('reference B')), 'reference B')
-        self.assertEqual((cache.hits, cache.misses), (0, 3))
-
-    def test_unversioned_reference_is_recomputed_instead_of_staying_stale(self):
-        compute = Mock(side_effect=lambda wav: wav.voice)
-        cache = ReferenceSpeakerCache(compute)
-        waveform = self.Waveform('reference A')
-        del waveform._version
-        self.assertEqual(cache(waveform), 'reference A')
-        waveform.voice = 'edited reference A'
-        self.assertEqual(cache(waveform), 'edited reference A')
-        self.assertEqual(compute.call_count, 2)
 
 
 class ContinuityTests(unittest.TestCase):

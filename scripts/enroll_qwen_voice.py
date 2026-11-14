@@ -35,16 +35,8 @@ def review(directory, report, reference):
     page = page.replace(html.escape('Qwen 3.1 / ' + report['backends'][0]['voice']),
                         'Qwen 3.1 / 若娜瓦复刻声线')
     intro = ('<section><h2>若娜瓦原声参考 · 15.30 秒</h2>'
-             '<p>来自当前 A 参考的原录音，另存为扩展样本。音色相似度请以试听判断。</p>'
+             '<p>从原始录音（2）裁切的千问音色参考。音色相似度请以试听判断。</p>'
              f'<audio controls src="{html.escape(reference.as_uri(), quote=True)}"></audio></section>')
-    old = ROOT / 'voice-audition/realtime-comparison-20261005-125643'
-    for index, text in enumerate(report['texts']):
-        intro += f'<section><h2>同文旧样本 · {index+1}</h2><p>{html.escape(text)}</p>'
-        for backend, label in (('gpt', 'GPT-SoVITS V2ProPlus / A'), ('qwen', 'Qwen 系统音色 longanqian')):
-            audio = old / f'{backend}-{index+1}-source.wav'
-            if audio.is_file():
-                intro += f'<p>{label}</p><audio controls src="{html.escape(audio.as_uri(),quote=True)}"></audio>'
-        intro += '</section>'
     page += intro
     page_path.write_text(page, encoding='utf-8')
 
@@ -56,7 +48,7 @@ def main():
     parser.add_argument('--activate', action='store_true')
     args = parser.parse_args()
     manifest_path = ROOT / 'config/qwen-voice-enrollment.json'
-    reference = ROOT / 'voice-reference/prepared/qwen-ronova.wav'
+    reference = ROOT / 'voice-reference/prepared/qwen-voice-reference.wav'
     source = ROOT / 'voice-reference/录音 (2).wav'
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding='utf-8-sig'))

@@ -3,6 +3,8 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QWidget
 from client_relationship import MIN_AFFINITY, MAX_AFFINITY
+from client_fonts import scaled_size
+from client_theme import COLORS
 
 
 class AffinityBar(QWidget):
@@ -23,7 +25,7 @@ class AffinityBar(QWidget):
         value = min(MAX_AFFINITY,max(MIN_AFFINITY,int(value)))
         description = f'好感度 {value} / 100' + (' · 生气中' if value<0 else '')
         self.setAccessibleDescription(description)
-        self.setToolTip(description+'\n范围 −20～100；红色表示好感，紫色表示生气。')
+        self.setToolTip(description+'\n范围 −20～100。')
         if value!=self._value:
             self._value = value
             self.update()
@@ -47,15 +49,16 @@ class AffinityBar(QWidget):
         scale = self.height()/346
         rail,label,fill = self.layout_geometry()
         width = rail.width()
-        color = QColor('#A989B9' if self._value<0 else '#D93652')
+        color = QColor(COLORS['disabled' if self._value < 0 else 'gray'])
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(235,225,230,65))
+        track = QColor(COLORS['border']); track.setAlpha(90)
+        painter.setBrush(track)
         painter.drawRoundedRect(rail,width/2,width/2)
         if fill:
-            painter.setBrush(color)
+            painter.setBrush(QColor(COLORS['primary']) if self._value > 0 else color)
             painter.drawRoundedRect(QRectF(rail.x(),rail.bottom()-fill,width,fill),width/2,width/2)
-        painter.setPen(color if self._value else QColor('#D8D1D4'))
-        font = QFont('Microsoft YaHei UI'); font.setPixelSize(max(9,round(11*scale)))
+        painter.setPen(color if self._value else QColor(COLORS['border']))
+        font = QFont(); font.setPixelSize(scaled_size(max(10,round(12*scale))))
         painter.setFont(font)
         painter.drawText(label,Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,str(self._value))
         painter.end()

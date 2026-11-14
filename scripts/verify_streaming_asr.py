@@ -20,7 +20,7 @@ from voice_input import ChineseRecognizer, InputSession, InputConfig
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tts', action='store_true', help='Mock chat, real local GPT synthesis and waveOut playback')
+    parser.add_argument('--tts', action='store_true', help='Mock chat, real local IndexTTS synthesis and waveOut playback')
     parser.add_argument('--model', choices=('small', 'standard'), default='standard')
     args = parser.parse_args()
     os.environ.pop('ALI_API_Key', None)
@@ -56,7 +56,7 @@ def main():
             pipeline.cancel()
             status('Prerecorded new speech cancelled the previous local reply')
     try:
-        for name in ('A', 'B'):
+        for name in ('asr-near-end', 'asr-far-end-echo'):
             path = ROOT / f'voice-reference/prepared/{name}.wav'
             original_hash = hashlib.sha256(path.read_bytes()).hexdigest()
             pcm, rate = sf.read(path, dtype='float32', always_2d=True)

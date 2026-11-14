@@ -26,7 +26,6 @@ class BackendRouter:
         self.voice = VoiceRoute(self)
 
     def validate(self, name):
-        if name not in ('gpt', 'qwen', 'openai', 'deepseek'): raise ValueError('对话模型选项无效')
         if name not in self.backends:
             if name in self.factories: self.backends[name] = self.factories[name]()
             elif name == 'qwen': self.backends[name] = self.qwen_factory()

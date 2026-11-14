@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "status": "user_requested_replacement",
-  "updated_at": "2026-10-15",
+  "updated_at": "2026-10-31",
   "portraits": [
     {
       "tier": "acquaintance",
       "label": "相识",
-      "file": "portrait-from-161923-v4.png",
+      "file": "qwen-image-3.0/cleaned/portrait-from-161923-v4.png",
       "source": "design/character-final/qwen-image-3.0/portrait-from-161923-v4.png",
       "cleaned_source": "design/character-final/qwen-image-3.0/cleaned/portrait-from-161923-v4.png",
       "source_sha256": "d677777512df034915663383fc9c569c9b200509250e39c07ad026f1d4fbc3f0",
@@ -23,7 +23,7 @@
     {
       "tier": "familiar",
       "label": "熟悉",
-      "file": "portrait-familiar-final.png",
+      "file": "qwen-image-3.0/cleaned/portrait-familiar-final.png",
       "source": "design/character-final/qwen-image-3.0/portrait-familiar-final.png",
       "cleaned_source": "design/character-final/qwen-image-3.0/cleaned/portrait-familiar-final.png",
       "source_sha256": "ebbe70723bebc585677bb7a4e653e63084094c3653c4b8ce764de1becc4a4c8f",
@@ -40,7 +40,7 @@
     {
       "tier": "close",
       "label": "亲密",
-      "file": "portrait-close-final.png",
+      "file": "qwen-image-3.0/cleaned/portrait-close-final.png",
       "source": "design/character-final/qwen-image-3.0/portrait-close-final.png",
       "cleaned_source": "design/character-final/qwen-image-3.0/cleaned/portrait-close-final.png",
       "source_sha256": "27992faf0779495ade78ac313b643710b477be963a85669bfa59dd56a22c5a63",
@@ -57,7 +57,7 @@
     {
       "tier": "bond",
       "label": "羁绊",
-      "file": "portrait-bond-final.png",
+      "file": "qwen-image-3.0/cleaned/portrait-bond-final.png",
       "source": "design/character-final/qwen-image-3.0/portrait-bond-final.png",
       "cleaned_source": "design/character-final/qwen-image-3.0/cleaned/portrait-bond-final.png",
       "source_sha256": "fcaa9faea2d4386e655c8fe7094ea9fa2fb572ef8e437cc854c09c91d1cbddf4",
@@ -74,7 +74,7 @@
     {
       "tier": "angry",
       "label": "生气",
-      "file": "portrait-angry-final.png",
+      "file": "qwen-image-3.0/cleaned/portrait-angry-final.png",
       "source": "design/character-final/qwen-image-3.0/portrait-angry-final.png",
       "cleaned_source": "design/character-final/qwen-image-3.0/cleaned/portrait-angry-final.png",
       "source_sha256": "45c4cbea5d338462f0ac1a192712431c20192ead526876eb556c85f454e1de6e",

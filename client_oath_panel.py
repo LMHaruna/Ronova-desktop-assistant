@@ -1,11 +1,10 @@
-"""Local ceremony video, floating voice captions and atomic completion."""
+"""Local ceremony playback and atomic completion."""
 import time
 from PySide6.QtCore import QEvent, QPoint, QPropertyAnimation, QRect, QTimer, Qt
 from PySide6.QtWidgets import QDialog, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QWidget
-from client_oath import validate_ceremony
 from client_oath_audio import OathSound
-from client_oath_caption import OathCaption
 from client_oath_video import OathVideoAssets as OathAssets, OathVideoScene as OathScene
+from client_theme import themed
 
 
 class OathDialog(QDialog):
@@ -23,26 +22,31 @@ class OathDialog(QDialog):
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(900,560)
-        self.setGeometry(QRect(main.mapToGlobal(QPoint(0,0)),main.size()))
-        self.setStyleSheet('''QDialog{background:transparent;color:#F7F0F2;}
-            QLabel{background:transparent;color:#F7F0F2;font-family:"Microsoft YaHei UI";font-size:16px;}
-            QPushButton{background:rgba(40,37,45,210);color:#DDD5D9;border:1px solid #59505B;border-radius:9px;padding:4px 8px;font-size:13px;}
-            QPushButton:hover{background:#39323D;border-color:#B27B8D;}
-            QPushButton:disabled{color:#8C8690;}
-            QPushButton#oathPrimary{background:#87384F;color:#FFF2F0;border:1px solid #B26176;}
-            QPushButton#oathPrimary:hover{background:#A44763;}
-            QPushButton#oathPrimary:disabled{background:#493943;color:#8C8690;}''')
+        if getattr(main,'desktop',False):
+            area = QWidget.screen(main).availableGeometry()
+            bounds = QRect(0,0,min(1120,area.width()),min(720,area.height()))
+            bounds.moveCenter(area.center())
+            self.setGeometry(bounds)
+        else:
+            self.setGeometry(QRect(main.mapToGlobal(QPoint(0,0)),main.size()))
+        self.setStyleSheet(themed('''QDialog{background:transparent;color:$surface;}
+            QLabel{background:transparent;color:$surface;}
+            QPushButton{background:$surface;color:$text;border:1px solid $gray;border-radius:9px;padding:4px 8px;}
+            QPushButton:hover{background:$selection;}
+            QPushButton:disabled{background:$elevated;color:$muted;}
+            QPushButton#oathPrimary{background:$primary;color:$surface;border-color:$primary;}
+            QPushButton#oathPrimary:hover{background:$primaryHover;border-color:$primaryHover;}
+            QPushButton#oathPrimary:disabled{background:$elevated;color:$muted;border-color:$gray;}'''))
         error=''
-        try: validate_ceremony(); self.assets=OathAssets(); self.assets_ready=True
+        try: self.assets=OathAssets(); self.assets_ready=True
         except RuntimeError as exc: error=str(exc)
         outer=QHBoxLayout(self); outer.setContentsMargins(0,0,0,0)
         self.content=QWidget(self); outer.addWidget(self.content)
         video_layout=QHBoxLayout(self.content); video_layout.setContentsMargins(0,0,0,0)
         self.scene=OathScene(self.assets); video_layout.addWidget(self.scene)
-        self.caption=OathCaption(self.scene); self.caption.show_at(0)
         self.status=QLabel(error,self.scene); self.status.setWordWrap(True)
         self.status.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignBottom)
-        self.status.setStyleSheet('font-size:13px;color:#D0AAB5;')
+        self.status.setStyleSheet(themed('font-size:13px;color:$surface;'))
         self.primary=QPushButton('跳过动画',self.scene); self.primary.setObjectName('oathPrimary')
         self.secondary=QPushButton('取消仪式',self.scene)
         for button in (self.primary,self.secondary): button.setFixedSize(96,36)
@@ -71,12 +75,11 @@ class OathDialog(QDialog):
     def layout_overlays(self):
         width,height=self.scene.width(),self.scene.height()
         margin=round(max(18,min(26,height*.03))); gap=10
-        self.caption.setGeometry(self.scene.rect())
         self.primary.move(width-margin-self.primary.width(),height-margin-self.primary.height())
         self.secondary.move(self.primary.x()-gap-self.secondary.width(),self.primary.y())
         self.status.setGeometry(width-margin-min(360,width-2*margin),self.primary.y()-82,
                                 min(360,width-2*margin),68)
-        self.caption.raise_(); self.status.raise_(); self.primary.raise_(); self.secondary.raise_()
+        self.status.raise_(); self.primary.raise_(); self.secondary.raise_()
 
     def eventFilter(self,watched,event):
         if watched is self.scene and event.type()==QEvent.Type.Resize: self.layout_overlays()
@@ -102,11 +105,7 @@ class OathDialog(QDialog):
             if self.sound: self.sound.stop()
             self.scene.stop()
             self.scene.advance(self.assets.duration)
-            self.show_all_lines()
             self.launch('finish',lambda:self.controller.finish_oath(self.token,skip=True))
-
-    def show_all_lines(self):
-        self.caption.show_all(self.replay)
 
     def refresh(self):
         if self.controller.closed or self.controller.closing:
@@ -124,14 +123,12 @@ class OathDialog(QDialog):
                     volume=preferences.volume,device=preferences.speaker,
                     duration=self.assets.duration,end_padding_seconds=0)
                 self.scene.begin()
-                self.caption.show_at(0)
                 self.primary.setText('跳过动画'); self.secondary.setText('取消仪式')
             elif kind=='finish' and result:
-                self.finished_ceremony=True; self.show_all_lines()
+                self.finished_ceremony=True
                 if self.sound: self.sound.stop()
                 self.scene.stop()
                 self.scene.advance(self.assets.duration)
-                if not self.skip_requested: self.caption.show_last()
                 self.primary.setText('返回日常'); self.secondary.hide()
                 self.status.setText('')
                 if not self.skip_requested and not self.close_requested:
@@ -173,7 +170,6 @@ class OathDialog(QDialog):
         elapsed=self.sound.position() if self.sound and self.sound.started is not None else 0
         if not self.skip_requested:
             self.scene.advance(elapsed)
-            self.caption.show_at(elapsed)
         if self.scene.error:
             if self.sound: self.sound.stop()
             self.scene.stop(); self.status.setText(self.scene.error); return

@@ -143,9 +143,7 @@ def run():
                 ('memory',settings.open_memory,settings.memory_page)):
                 visit(label,action,settings.stack,target)
                 if label=='incoming-call':
-                    visit('incoming-limit',lambda:settings.choose('call_daily_limit','每日最多来电'),settings.stack,settings.choice_page)
                     visit('incoming-back',lambda:settings.stack.setCurrentWidget(settings.call_page),settings.stack,settings.call_page)
-                    visit('incoming-history',settings.open_call_history,settings.stack,settings.call_history_page)
                 if label=='memory':
                     for name,action,page in (('memory-editor',lambda:memory.edit(None),memory.editor),
                         ('relationship',memory.choose_stage,memory.stages),

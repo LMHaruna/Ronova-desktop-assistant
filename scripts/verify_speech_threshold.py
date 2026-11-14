@@ -52,10 +52,10 @@ def prerecorded(recognizer, name, noise_rms=180):
         speech = gate.process(data, raw_speech, session.detector.active)
         if not was_ready: continue
         session.process(data, speech, index / 16000)
-    expected = ('神的想法', '告诉你') if name == 'A' else ('听我说', '不讨喜')
+    expected = ('神的想法', '告诉你') if name == 'asr-near-end' else ('听我说', '不讨喜')
     # The same unmodified ASR misrecognizes 神的 as 什么 under this noise.
     # Keep clean-audio lexical checks strict; label the noisy ASR error below.
-    if name == 'A' and noise_rms:
+    if name == 'asr-near-end' and noise_rms:
         expected = ('理解', '想法', '告诉你')
     passed = (1 <= len(finals) <= 2 and all(any(word in text for text in finals) for word in expected)
               and len(confirmed) == len(starts) == len(finals)
@@ -66,7 +66,7 @@ def prerecorded(recognizer, name, noise_rms=180):
                 confirmed_onsets=confirmed, final_times=final_times, gate=gate.timings(),
                 reference_sha256=before, reference_unchanged=hashlib.sha256(path.read_bytes()).hexdigest() == before,
                 injected_noise_rms=noise_rms, forced_background_vad_positive=True,
-                known_noisy_asr_substitution='神的 → 什么（原有无音量门限对照同样出现）' if name == 'A' and noise_rms else None,
+                known_noisy_asr_substitution='神的 → 什么（原有无音量门限对照同样出现）' if name == 'asr-near-end' and noise_rms else None,
                 passed=passed)
 
 
@@ -74,7 +74,7 @@ def main():
     suite = unittest.defaultTestLoader.discover(str(ROOT / 'scripts'), pattern='test_*.py')
     tests = unittest.TextTestRunner(verbosity=1).run(suite)
     recognizer = ChineseRecognizer()
-    records = [prerecorded(recognizer, name, noise) for noise in (0, 180) for name in ('A', 'B')]
+    records = [prerecorded(recognizer, name, noise) for noise in (0, 180) for name in ('asr-near-end', 'asr-far-end-echo')]
     from verify_echo_control import synthetic
     echo = synthetic(include_speech_gate=True)
     now = datetime.now(timezone(timedelta(hours=8)))

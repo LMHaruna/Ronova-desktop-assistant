@@ -7,11 +7,20 @@ from chat_client import ChatError, ChatCancelled
 
 
 class SentenceBuffer:
-    def __init__(self, emit, minimum=8, maximum=80):
+    def __init__(self, emit, minimum=8, maximum=80, strong_minimum=5):
         self.emit = emit
         self.minimum = minimum
         self.maximum = maximum
+        self.strong_minimum = strong_minimum
         self.buffer = ""
+
+    @classmethod
+    def for_engine(cls, emit, tts_engine):
+        # IndexTTS generates whole segments. Tiny clauses finish playing before
+        # the next segment is ready, so collect enough text to sustain playback.
+        if tts_engine == 'indextts-2.5':
+            return cls(emit, minimum=18, strong_minimum=18)
+        return cls(emit)
 
     def feed(self, token):
         self.buffer += token
@@ -20,7 +29,7 @@ class SentenceBuffer:
             for index, char in enumerate(self.buffer, 1):
                 strong = char in "。！？!?\n"
                 weak = char in "，,；;：:"
-                if strong and index >= 5 or weak and index >= self.minimum:
+                if strong and index >= self.strong_minimum or weak and index >= self.minimum:
                     boundary = index
                     break
             if boundary is None and len(self.buffer) >= self.maximum:
@@ -162,6 +171,7 @@ class ReplyPipeline:
                 self._opening(turn)
                 continue
             direct_audio = getattr(chat, 'outputs_audio', False) is True
+            whole_reply = getattr(voice, 'whole_reply', False) is True
             header_printed = False
             voice_failed = False
             def send_sentence(text):
@@ -179,7 +189,7 @@ class ReplyPipeline:
                     except Exception as exc:
                         voice_failed = True
                         self.status(f"语音未启动（{type(exc).__name__}），文字保留")
-            sentences = SentenceBuffer(send_sentence)
+            sentences = SentenceBuffer.for_engine(send_sentence, getattr(voice, 'tts_engine', None))
             def token(text):
                 nonlocal header_printed
                 with self._lock:
@@ -192,7 +202,7 @@ class ReplyPipeline:
                     self.output(text)
                     turn.reply += text
                     self._event('delta', turn)
-                    sentences.feed(text)
+                    if not whole_reply: sentences.feed(text)
             try:
                 # Start local model preparation while waiting for cloud text.
                 # prepare() only schedules the worker; it never blocks on warmup.
@@ -224,7 +234,8 @@ class ReplyPipeline:
                         raise ChatCancelled("本轮已停止")
                     self.last_reply = reply
                     turn.reply = reply
-                    sentences.finish()
+                    if whole_reply: send_sentence(reply)
+                    else: sentences.finish()
                     self.output("\n")
             except ChatCancelled:
                 pass

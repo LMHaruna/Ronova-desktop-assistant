@@ -46,7 +46,7 @@ def initialize(force_cpu=False):
     os.environ['PATH'] = str(PACKAGE/'bin') + os.pathsep + os.environ['PATH']
     sys.path.insert(0, str(PACKAGE/'source'))
     if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
-    # Extra Index frontend libraries only. The shared GPT environment wins
+    # Extra Index frontend libraries only. The shared voice environment wins
     # for torch, CUDA, Transformers, NumPy and every dependency it already has.
     sys.path.append(str(PACKAGE/'extras'))
     if os.name=='nt' and DLL_DIRECTORY is None:
@@ -70,6 +70,14 @@ def initialize(force_cpu=False):
         model_dir=str(PACKAGE/'models'), device=device,
         use_bf16=use_bf16, use_cuda_kernel=False,
         use_deepspeed=False, use_accel=False, use_torch_compile=False, use_qwen_emo=False)
+    load_reference = model._load_and_cut_audio
+    reference_limit = [15.0]
+    def load_full_reference(audio_path, max_audio_length_seconds, verbose=False, sr=None):
+        audio, rate = load_reference(audio_path, max(max_audio_length_seconds, reference_limit[0]), verbose, sr)
+        acceleration['reference_audio_seconds'] = audio.shape[-1] / rate
+        acceleration['reference_max_seconds'] = reference_limit[0]
+        return audio, rate
+    model._load_and_cut_audio = load_full_reference
     decoder = None
     if device.startswith('cuda') and options['cuda_graph']:
         from index_decode_graph import NativeIndexDecoder
@@ -100,6 +108,10 @@ def initialize(force_cpu=False):
             torch.manual_seed(20261003)
             if device.startswith('cuda'): torch.cuda.manual_seed_all(20261003)
             audio = parameters['ref_audio_path']
+            limit = float(parameters.get('reference_max_seconds', 15))
+            if not 3 <= limit <= 30:
+                raise ValueError('参考音频读取长度须在 3–30 秒之间')
+            reference_limit[0] = limit
             stats = self.reference_speaker_cache
             if model.cache_spk_audio_prompt==audio: stats.hits += 1
             else: stats.misses += 1
@@ -109,8 +121,8 @@ def initialize(force_cpu=False):
             class Cancel(StoppingCriteria):
                 def __call__(self, input_ids, scores, **kwargs):
                     return owner.cancel.is_set() or owner.cancel_check()
-            # Same sentence queue as GPT-SoVITS; Index also yields internal
-            # segments as soon as available, with no extra interval silence.
+            # Yield internal segments as soon as available, without adding
+            # interval silence between them.
             text = parameters['text'].replace('倒是', '<倒|DAO4>是')
             if decoder: decoder.enabled = parameters.get('index_cuda_graph',True)
             steps = parameters.get('index_diffusion_steps',diffusion_steps)

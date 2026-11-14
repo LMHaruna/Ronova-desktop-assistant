@@ -45,8 +45,8 @@ def energy(samples):
 
 
 def synthetic(include_speech_gate=False):
-    far, far_path = load('B')
-    near, near_path = load('A')
+    far, far_path = load('asr-far-end-echo')
+    near, near_path = load('asr-near-end')
     count = int(34 * 16000)
     far = np.resize(far, count) * .6
     far[-32000:] = 0
@@ -159,7 +159,7 @@ def acoustic(device):
         player.poll_reference()
         return reference.read(captured)
     processor = SpeakerInput(ref, playing.is_set, print)
-    path = ROOT / 'voice-reference/prepared/B.wav'
+    path = ROOT / 'voice-reference/prepared/asr-far-end-echo.wav'
     raw_detector, clean_detector = TurnDetector(), TurnDetector(InputConfig(onset_ms=240, minimum_ms=260))
     raw_vad, clean_vad = webrtcvad.Vad(2), webrtcvad.Vad(2)
     result = dict(test='physical_speaker_microphone_echo_only', raw_onsets=0, cleaned_onsets=0,
@@ -250,7 +250,7 @@ def acoustic(device):
         peak = int(np.argmax(np.abs(selected))) + max(0,center-8000) - center
         result['reference_capture_peak_correlation'] = float(np.abs(selected).max()/np.sqrt(np.dot(raw_capture,raw_capture)*np.dot(mirrored,mirrored)+1))
         result['reference_capture_peak_lag_ms'] = peak/16
-        original,_ = load('B')
+        original,_ = load('asr-far-end-echo')
         baseline = correlate(raw_capture,original,mode='valid',method='fft') if len(raw_capture)>=len(original) else np.array([0.])
         sums = np.concatenate(([0.],np.cumsum(raw_capture*raw_capture)))
         powers = sums[len(original):]-sums[:-len(original)]

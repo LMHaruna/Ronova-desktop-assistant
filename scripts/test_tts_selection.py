@@ -3,6 +3,7 @@ from dataclasses import replace
 from pathlib import Path
 import os
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from unittest.mock import Mock
@@ -16,6 +17,17 @@ from local_voice import LocalVoice, PYTHON
 ROOT = Path(__file__).resolve().parents[1]
 
 class SelectionTests(unittest.TestCase):
+    def test_retired_voice_preferences_migrate_to_index_preserving_chat_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'preferences.json'
+            for retired in ('gpt-sovitsv2proplus', 'gpt-sovitsv5turbo'):
+                path.write_text('{"engine":"gpt","volume":0.97,"gpt_tts_engine":"'+retired+'","deepseek_tts_engine":"indextts-2.5"}')
+                prefs = Preferences.load(path)
+                self.assertEqual(prefs.gpt_tts_engine, 'indextts-2.5')
+                self.assertEqual(prefs.deepseek_tts_engine, 'indextts-2.5')
+                self.assertEqual(prefs.engine, 'gpt')
+                self.assertEqual(prefs.volume, 0.97)
+
     def test_index_reference_emotion_cache_reuses_and_invalidates_features(self):
         source=str(ROOT/'runtime/indextts-2.5/source'); extras=str(ROOT/'runtime/indextts-2.5/extras')
         with patch.object(sys,'path',[*sys.path,source,extras]):
@@ -33,19 +45,21 @@ class SelectionTests(unittest.TestCase):
             model.merge_emovec(features,features,torch.tensor([2]),lengths)
             self.assertEqual(model.get_emovec.call_count,3)
 
-    def test_profiles_persist_independently_and_old_preferences_keep_gpt(self):
+    def test_index_defaults_persist_and_old_preferences_keep_chat_backend(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'preferences.json'; path.write_text('{"engine":"gpt"}')
             prefs=Preferences.load(path)
-            self.assertEqual(prefs.gpt_tts_engine,'gpt-sovitsv2proplus')
-            replace(prefs,gpt_tts_engine='indextts-2.5').save(path)
+            self.assertEqual(prefs.gpt_tts_engine,'indextts-2.5')
+            replace(prefs,volume=.6).save(path)
             loaded=Preferences.load(path)
             self.assertEqual(loaded.gpt_tts_engine,'indextts-2.5')
-            self.assertEqual(loaded.deepseek_tts_engine,'gpt-sovitsv2proplus')
+            self.assertEqual(loaded.deepseek_tts_engine,'indextts-2.5')
+            self.assertEqual(loaded.volume,.6)
+            self.assertEqual(loaded.engine,'gpt')
             with self.assertRaises(ValueError): replace(loaded,gpt_tts_engine='invalid').validate()
 
-    def test_both_workers_use_gpt_python_and_release_can_reopen(self):
-        for engine in ('indextts-2.5','gpt-sovitsv2proplus'):
+    def test_index_uses_shared_python_and_release_can_reopen(self):
+        for engine in ('indextts-2.5',):
             voice=LocalVoice(tts_engine=engine,player=lambda *args:None)
             try:
                 self.assertEqual(voice.python,PYTHON)
@@ -56,26 +70,20 @@ class SelectionTests(unittest.TestCase):
                 self.assertTrue(voice._play_thread.is_alive())
             finally: voice.close()
 
-    def test_switch_releases_other_model_and_keeps_text_backend(self):
+    def test_removed_voice_engine_is_rejected_without_changing_text_backend(self):
         with tempfile.TemporaryDirectory() as folder, patch('client_models.environment',return_value='fixture-key'):
             router,chat,voice=fake_router(); controller=DesktopController(folder,router=router,call_factory=FakeCall)
-            old=FakeVoice(); old._process=object(); old.released=0
-            def release(): old._process=None; old.released+=1
-            old.release_worker=release
-            new=FakeVoice(); new.engine='gpt'; new._process=None
-            controller.local_voices={'gpt-sovitsv2proplus':old,'indextts-2.5':new}
-            controller.owns_router=True; router.selected='gpt'
-            text=router.backends['gpt'][0]; router.backends['gpt']=(text,old)
+            router.selected='gpt'
+            text=router.backends['gpt'][0]
+            selected_voice=router.voice.snapshot()
             try:
-                controller.call.active=True; controller.call_requested=True
-                self.assertTrue(controller.set_tts_engine('gpt','indextts-2.5').result(3))
-                self.assertEqual(old.released,1); self.assertIs(router.backends['gpt'][0],text)
-                self.assertIs(router.voice.snapshot(),new)
-                self.assertFalse(controller.call.active); self.assertFalse(controller.call_requested)
+                with self.assertRaises(ValueError):
+                    controller.set_tts_engine('gpt','gpt-sovitsv5turbo')
+                self.assertIs(router.backends['gpt'][0],text)
+                self.assertIs(router.voice.snapshot(),selected_voice)
                 self.assertEqual(text.calls,0)
-                self.assertEqual(controller.preferences.deepseek_tts_engine,'gpt-sovitsv2proplus')
+                self.assertEqual(controller.preferences.deepseek_tts_engine,'indextts-2.5')
             finally: controller.close().result(5)
-            self.assertTrue(old.closed); self.assertTrue(new.closed)
 
 class DropdownTests(unittest.TestCase):
     @classmethod
@@ -87,7 +95,8 @@ class DropdownTests(unittest.TestCase):
     def test_dropdown_choices_links_and_switch_save_without_cloud(self):
         from client_app import ClientWindow
         from PySide6.QtTest import QTest
-        with tempfile.TemporaryDirectory() as folder, patch('client_models.environment',return_value='fixture-key'), \
+        with tempfile.TemporaryDirectory() as folder, patch('client_models.environment',
+                side_effect=lambda name:'' if name=='DEEPSEEK_API_KEY' else 'fixture-key'), \
                 patch('requests.sessions.Session.request',side_effect=AssertionError('network forbidden')), \
                 patch('voice_input.LiveMicrophone.start',side_effect=AssertionError('microphone forbidden')):
             router,chat,voice=fake_router(); controller=DesktopController(folder,router=router,call_factory=FakeCall)
@@ -95,11 +104,23 @@ class DropdownTests(unittest.TestCase):
             try:
                 window.settings(); QTest.qWait(450)
                 pane=window.settings_pane; pane.choose_models(); QTest.qWait(200)
-                self.assertEqual(set(pane.model_tts_combos),{'gpt','deepseek'})
+                self.assertEqual(set(pane.model_tts_combos),{'gpt','deepseek','qwen_max'})
+                from PySide6.QtWidgets import QLabel
+                reference_notes = pane.findChildren(QLabel, 'modelVoiceReference')
+                self.assertEqual(reference_notes, [])
+                selected=controller.preferences.engine
+                with patch.object(controller,'apply_preferences',wraps=controller.apply_preferences) as apply:
+                    pane.select_model('deepseek')
+                    deadline=time.monotonic()+3
+                    while not pane.model_fields['deepseek']['api_key'].isVisible() and time.monotonic()<deadline:
+                        QTest.qWait(25)
+                    self.assertTrue(pane.model_fields['deepseek']['api_key'].isVisible())
+                    self.assertEqual(controller.preferences.engine,selected)
+                    apply.assert_not_called()
                 for engine,combo in pane.model_tts_combos.items():
                     self.assertEqual([combo.itemData(i) for i in range(combo.count())],
-                                     ['indextts-2.5','gpt-sovitsv2proplus'])
-                    combo.setCurrentIndex(0); self.assertTrue(pane.pending.result(3)); pane.refresh()
+                                     ['indextts-2.5','qwen-audio-3.1-tts-next'])
+                    self.assertEqual(combo.currentData(),'indextts-2.5')
                     self.assertEqual(getattr(controller.preferences,engine+'_tts_engine'),'indextts-2.5')
                 self.assertIn('https://platform.deepseek.com/api_keys',pane.model_key_links['deepseek'].text())
                 for engine in ('gpt','qwen'):

@@ -13,7 +13,7 @@ def argument_parser():
     parser.add_argument("--no-voice", action="store_true", help="仅文字聊天")
     parser.add_argument("--call", choices=("headphones", "speakers", "speakers-aec"), help="启动持续中文语音模式")
     parser.add_argument("--mic", type=int, help="麦克风设备编号，见 /devices")
-    parser.add_argument('--engine', choices=('gpt', 'qwen'), default=default_backend(), help='默认千问实时语音；gpt 为 GPT-SoVITS V2ProPlus')
+    parser.add_argument('--engine', choices=('gpt', 'qwen'), default=default_backend(), help='默认千问实时语音；gpt 为 IndexTTS-2.5')
     return parser
 
 
@@ -39,7 +39,7 @@ def main():
     print("/voice on/off · /stop · /retry · /clear · /timings · /quit")
     print("/call on（扬声器） · /call aec（扬声器打断试验） · /call headphones（耳机） · /call off · /devices · /mic 编号")
     print('/engine gpt · /engine qwen · /engine（查看当前后端）；默认千问 Qwen-Audio-3.1-Realtime-Plus')
-    status('当前语音：' + ('GPT-SoVITS V2ProPlus（CPU）' if router.selected == 'gpt' else 'Qwen-Audio-3.1-Realtime-Plus'))
+    status('当前语音：' + ('IndexTTS-2.5（本地）' if router.selected == 'gpt' else 'Qwen-Audio-3.1-Realtime-Plus'))
     try:
         if not args.no_voice:
             try:
