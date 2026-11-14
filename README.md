@@ -48,7 +48,7 @@ Ronova 是一个以若娜瓦为角色的 Windows 桌面助手，提供文字聊�
 ## 快速开始
 
 1. 在 64 位 Windows 上，从 [GitHub Releases](https://github.com/LMHaruna/Ronova-desktop-assistant/releases) 的发布说明获取 Windows 运行包。新版运行包自带 **Windows x64 CPython 3.11.17**，无需另装 Python。GitHub 自动生成的 Source code 压缩包需要另行准备模型和运行依赖。
-2. 将单文件 ZIP 解压到要安装的目录，双击 `安装.cmd`。安装程序会用随包的 Python 和离线依赖创建 `runtime/voice-venv`，完成后双击 `Start-Client.cmd` 启动。也可直接双击 `Start-Client.cmd`，首次启动时会自动安装依赖。解压后建议在同一磁盘额外留出至少 7 GiB 安装依赖，并为缓存和修复留出空间。
+2. 根据发布页的说明下载全部分卷并合并、解压，双击 `安装.cmd`。安装程序会用随包的 Python 和离线依赖创建 `runtime/voice-venv`，完成后双击 `Start-Client.cmd` 启动。也可直接双击 `Start-Client.cmd`，首次启动时会自动安装依赖。请为分卷、合并后的压缩包、解压文件和安装依赖预留足够空间。
 3. 打开「设置 → 大模型」，为陪伴聊天配置所选模型的 API Key。使用加班区时，另需本机可用的 Codex 客户端或 CLI，并在同一页登录 ChatGPT。
 
 发布页若提供 `Ronova-Setup.exe`，可双击后选择空目录安装。在线安装器会下载并校验完整资源包，再使用随包 Python 安装依赖。安装 0.1.0 建议预留 32 GiB 空间，用于下载、解压和创建运行环境。需要填写链接的版本适合测试，发布版可内置下载地址。

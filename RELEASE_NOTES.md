@@ -1,25 +1,15 @@
-# Ronova AI Companion v0.1.0
+# Ronova Desktop Assistant v0.2.0
 
-首个公开体验版。一个出于个人兴趣、借助 Codex 制作的角色陪伴项目，目前仍在完善中。
+此版本加入桌面助手入口、Live2D 视频通话、Codex 工作区、截图标注和桌面整理，并更新主动回应、语音与本机状态显示。
 
-## 当前功能
+## 安装
 
-- **文字与语音交流**：通过千问、DeepSeek 等大模型生成回复，支持中文语音输入、连续对话和语音打断。
-- **本地角色语音**：支持 GPT-SoVITS V2ProPlus 和 IndexTTS-2.5；千问实时模式使用云端语音。
-- **角色 RAG**：检索本地游戏背景资料，让回答尽量贴合角色设定与经历。
-- **记忆与好感度**：保存交流中的信息与偏好，提供简单的好感度、关系立绘和誓约互动。
-- **主动来电**：结合近期交流发起来电，可设置允许时段、每日次数和来电间隔。
+下载发布页中全部 `Ronova-0.2.0-Windows-x64-Offline.zip.001` 等分卷，以及 `Join-Ronova-Parts.ps1`，放入同一文件夹。在该文件夹中运行 PowerShell：
 
-## 运行与启动
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Join-Ronova-Parts.ps1
+```
 
-Windows x64，支持 CUDA 的 NVIDIA 独立显卡，显存以 8 GB 或以上作为运行参考。完整项目约 20 GB，还需预留环境准备和缓存空间。
+合并程序会验证完整 ZIP 的 SHA-256；完成后解压 ZIP，双击 `安装.cmd`，再运行 `Start-Client.cmd`。运行包包含 Windows x64 Python 3.11 和离线依赖，无需另行安装 Python。下载、合并、解压和创建运行环境需要较多磁盘空间，建议预留至少 45 GiB。GitHub 自动生成的 Source code 压缩包不包含运行时和模型。
 
-请下载附件中 `Ronova-AI-Companion-v0.1.0-Windows-x64.7z.*` 的全部分卷，放在同一目录，使用支持 7z 分卷的工具从 `.7z.001` 开始解压。`SHA256SUMS.txt` 提供各分卷的校验值。GitHub 自动生成的 Source code 压缩包不包含模型和运行环境。
-
-完整解压后双击 `Start-Client.cmd`，首次启动会自动准备项目内环境。在设置中填写从千问、DeepSeek 等官方平台获取的 API Key，并选择音频设备。
-
-运行包包含两套本地语音模型、内置 Python 和离线依赖。首次启动会在项目目录内创建共享语音环境，无需自行安装 Python、PyTorch 或 CUDA Toolkit。
-
-## 已知限制
-
-本版本为早期体验版，设备兼容性和部分界面交互仍需进一步完善。对话需要网络及有效 API Key，可能产生服务商费用；AI 回复和记忆可能出错。
+使用陪伴对话前，请在设置中配置自己的模型服务 API Key。Codex 工作区需要本机可用的 Codex 客户端或 CLI 并登录。显卡和模型要求详见 README。
