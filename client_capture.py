@@ -88,7 +88,7 @@ class SelectionOverlay(QWidget):
                 ('resetCapture', '重选', '<path d="M4 10a8 8 0 1 1 1 7M4 4v6h6"/>', capture.reset),
                 ('cancelCapture', '取消', '<path d="m6 6 12 12M18 6 6 18"/>', capture.cancel),
                 ('confirmCapture', '确认', '<path d="m5 12 4 4L19 6"/>', capture.confirm)):
-            color = COLORS['surface'] if name == 'confirmCapture' else COLORS['muted']
+            color = '#FFFFFF' if name == 'confirmCapture' else COLORS['muted']
             button = QPushButton(tool_icon(glyph, color), '')
             button.setObjectName(name)
             button.setAccessibleName(label); button.setToolTip(label)
@@ -144,10 +144,10 @@ class SelectionOverlay(QWidget):
         shade = QPainterPath(); shade.addRect(QRectF(self.rect()))
         holes = QPainterPath(); holes.setFillRule(Qt.FillRule.WindingFill)
         for rect in selections: holes.addRect(rect)
-        dim = QColor(COLORS['text']); dim.setAlpha(154)
+        dim = QColor('#302B2D'); dim.setAlpha(154)
         painter.fillPath(shade.subtracted(holes), dim)
         if selections:
-            painter.setPen(QPen(QColor(COLORS['surface']),3.5))
+            painter.setPen(QPen(QColor('#FFFFFF'),3.5))
             for rect in selections: painter.drawRect(rect)
             painter.setPen(QPen(QColor(COLORS['primary']),1.5))
             for rect in selections: painter.drawRect(rect)

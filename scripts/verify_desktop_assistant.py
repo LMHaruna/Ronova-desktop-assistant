@@ -278,7 +278,6 @@ def main():
         phone = ClientWindow(controller, ROOT, desktop=True)
         launcher = phone.launcher
         motion = phone.panels.motion
-        video_metrics = {}
 
         def wait_open(window):
             wait(lambda: window.isVisible() and not motion.isVisible())
@@ -463,56 +462,28 @@ def main():
             click(phone.end_button)
             wait(lambda: not controller.snapshot()['incoming'] and phone.overlay.phase == 'shown')
             if '--video' in sys.argv:
-                with patch('client_live2d.MODEL_PATH', Path('missing-video-model.model3.json')):
-                    click(options.plus); click(options.video)
-                    wait(lambda:phone.reply_alert.isVisible() and phone.overlay.phase == 'shown')
-                    assert '模型或纹理缺失' in phone.reply_alert.text() and len(controller.call.starts) == 2
-                    assert not phone.video_call and 'live2d' not in sys.modules
-                phone.reply_alert.hide()
-
-                ticks = [time.monotonic()]
-                heartbeat = QTimer()
-                heartbeat.timeout.connect(lambda:ticks.append(time.monotonic()))
-                heartbeat.start(50)
                 click(options.plus); click(options.video)
-                assert phone.video_preparing and not controller.call_requested
-                wait(lambda: phone.video_frame is not None and controller.call_requested, 40)
-                heartbeat.stop()
-                ticks.append(time.monotonic())
-                video_metrics = {'first_video_seconds':round(ticks[-1]-ticks[0],2),
-                                 'max_gui_gap_during_video_start_seconds':round(max(b-a for a,b in zip(ticks,ticks[1:])),3)}
-                assert 'live2d' not in sys.modules and phone.video_renderer.process.poll() is None
+                wait(lambda: phone.video_call and controller.call_requested)
+                assert not phone.assets.video_portrait.isNull()
                 assert len(controller.call.starts) == 3
                 assert phone.grab().save(str(output/'companion-video.png'))
                 assert_transparent_phone_corners(phone.grab(phone.overlay.navigation_bounds()).toImage())
-                def mouth_crop():
-                    frame = phone.video_frame
-                    return frame.copy(round(frame.width()*.44),round(frame.height()*.315),
-                                      round(frame.width()*.12),round(frame.height()*.08))
-                resting = mouth_crop()
-                voice.playback_active = True; voice.playback_level = .85
-                wait(lambda: phone.speaking_motion.amount > .7 and mouth_crop() != resting)
-                speaking = mouth_crop()
-                assert phone.grab().save(str(output/'companion-video-speaking.png'))
-                voice.playback_active = False; voice.playback_level = 0.
-                wait(lambda: phone.speaking_motion.amount == 0 and mouth_crop() != speaking)
                 click(phone.text_button); wait(lambda:controller.snapshot()['speaker_muted'])
                 click(phone.end_button)
                 wait(lambda: phone.overlay.phase == 'shown' and not controller.call_requested)
-                assert not phone.video_call and phone.video_frame is None
+                assert not phone.video_call
                 assert pane.input.toPlainText() == '保留这条草稿'
-                renderer = phone.video_renderer
                 click(options.plus); click(options.video)
-                wait(lambda:phone.video_frame is not None and controller.call_requested, 6)
-                assert phone.video_renderer is renderer and len(controller.call.starts) == 4
+                wait(lambda:phone.video_call and controller.call_requested, 6)
+                assert len(controller.call.starts) == 4
                 click(phone.end_button)
                 wait(lambda:phone.overlay.phase == 'shown' and not controller.call_requested)
             workspace_metrics = verify_workspace(phone,output) if '--workspace' in sys.argv else {}
             phone.quit_client()
-            wait(lambda: controller.closed and not launcher.isVisible() and phone.video_renderer is None)
+            wait(lambda: controller.closed and not launcher.isVisible() and not phone.video_call)
             report = {'passed': True, 'native_windows': True, 'icon_toggles': True, 'chat_and_call_fixtures': True,
                       'live2d_loaded_in_client': 'live2d' in sys.modules, 'video_call': '--video' in sys.argv,
-                      'microphone_started': False, 'cloud_requests': 0, **video_metrics, **workspace_metrics}
+                      'microphone_started': False, 'cloud_requests': 0, **workspace_metrics}
             (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
             print(json.dumps(report))
         finally:

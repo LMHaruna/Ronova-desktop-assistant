@@ -2,17 +2,20 @@
 from math import ceil
 from pathlib import PureWindowsPath
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import (QDesktopServices, QFont, QFontMetrics, QTextBlockFormat, QTextCharFormat,
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontMetrics, QTextBlockFormat, QTextCharFormat,
                            QTextCursor, QTextDocument, QTextOption)
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLayout, QPlainTextEdit, QPushButton,
                                QScrollArea, QSizePolicy, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from client_fonts import UI_FONT_SIZE, code_font, scaled_size, typography
+from client_theme import COLORS, LIGHT_COLORS
 from client_workspace_controls import PicturePreview
 
 
 class MessageText(QTextBrowser):
+    local_link_clicked = Signal(QUrl)
+
     def __init__(self):
         super().__init__()
         self.setObjectName('workMessageText')
@@ -22,19 +25,20 @@ class MessageText(QTextBrowser):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setOpenLinks(False)
         self.anchorClicked.connect(self.open_link)
-        font = QFont()
-        font.setPixelSize(scaled_size(UI_FONT_SIZE))
-        self.document().setDefaultFont(font)
-        self.document().setDocumentMargin(0)
+        self.apply_document_font()
         self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         self.source = None
         self.markdown = False
         typography().changed.connect(self.update_typography)
 
-    def update_typography(self, scale):
-        font = self.document().defaultFont()
+    def apply_document_font(self):
+        font = QFont(self.font())
         font.setPixelSize(scaled_size(UI_FONT_SIZE))
         self.document().setDefaultFont(font)
+        self.document().setDocumentMargin(scaled_size(3))
+
+    def update_typography(self, scale):
+        self.apply_document_font()
         if self.source is not None:
             text, markdown = self.source, self.markdown
             self.source = None
@@ -47,10 +51,11 @@ class MessageText(QTextBrowser):
         # arbitrary local files or fetch images from a remote server.
         return None
 
-    @staticmethod
-    def open_link(url):
+    def open_link(self, url):
         if url.scheme() in ('https','http') and url.host():
             QDesktopServices.openUrl(url)
+        else:
+            self.local_link_clicked.emit(url)
 
     def show_text(self, text, *, markdown=False):
         if text == self.source:
@@ -75,23 +80,50 @@ class MessageText(QTextBrowser):
         while block.isValid():
             cursor.setPosition(block.position())
             fmt = block.blockFormat()
-            fmt.setLineHeight(123,QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+            fmt.setLineHeight(145,QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
             if markdown:
                 if not fmt.nonBreakableLines():
                     fmt.setTopMargin(0)
-                    fmt.setBottomMargin(3 if block.textList() else 7)
+                    fmt.setBottomMargin(scaled_size(4 if block.textList() else 10))
                 fmt.setNonBreakableLines(False)
             cursor.setBlockFormat(fmt)
             block = block.next()
         cursor.endEditBlock()
+        self.refresh_theme()
         self.fit_height()
+
+    def refresh_theme(self):
+        """Recolor Markdown links without replacing their destinations or formatting."""
+        document = self.document()
+        ranges = []
+        block = document.begin()
+        while block.isValid():
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                if fragment.isValid() and fragment.charFormat().isAnchor():
+                    ranges.append((fragment.position(), fragment.length()))
+                iterator += 1
+            block = block.next()
+        if not ranges:
+            return
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(COLORS['link']))
+        cursor = QTextCursor(document)
+        cursor.beginEditBlock()
+        for position, length in ranges:
+            cursor.setPosition(position)
+            cursor.setPosition(position + length, QTextCursor.MoveMode.KeepAnchor)
+            cursor.mergeCharFormat(fmt)
+        cursor.endEditBlock()
 
     def fit_height(self):
         document = self.document()
         width = max(1,self.viewport().width())
         if document.textWidth() != width:
             document.setTextWidth(width)
-        height = ceil(document.size().height()) + 2
+        # Include the widget frame and the document's top and bottom padding.
+        height = ceil(document.size().height()) + 2 * self.frameWidth()
         if self.height() != height:
             self.setFixedHeight(height)
 
@@ -148,7 +180,7 @@ class TranscriptFoldout(QWidget):
 
 
 class TurnView(QWidget):
-    def __init__(self, turn, select_picture, reply_icons, play_reply):
+    def __init__(self, turn, select_picture, reply_icons, play_reply, open_preview):
         super().__init__()
         self.turn = turn
         self.last_state = None
@@ -159,6 +191,8 @@ class TurnView(QWidget):
         row.addStretch(1)
         self.bubble = QFrame()
         self.bubble.setObjectName('workUserBubble')
+        self.bubble._ronova_fixed_theme = True
+        self.refresh_bubble_theme()
         user = QVBoxLayout(self.bubble)
         user.setContentsMargins(14,9,14,9)
         user.setSpacing(6)
@@ -181,6 +215,7 @@ class TurnView(QWidget):
 
         self.answer = MessageText()
         self.answer.setAccessibleName('Codex 回复')
+        self.answer.local_link_clicked.connect(lambda url: open_preview(turn,url))
         answer_layout = QVBoxLayout()
         answer_layout.setSpacing(1)
         answer_layout.addWidget(self.answer)
@@ -198,12 +233,28 @@ class TurnView(QWidget):
             answer_layout.addWidget(self.speaker,0,Qt.AlignmentFlag.AlignLeft)
         self.status = QLabel()
         self.status.setObjectName('workHint')
-        layout.addWidget(self.status)
         self.changed_files = TranscriptFoldout('本轮修改的文件')
         self.changed_files.detail.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(self.changed_files)
         self.execution = TranscriptFoldout('命令输出与文件修改状态')
         layout.addWidget(self.execution)
+        layout.addWidget(self.status)
+        self.progress_phase = 0
+        self.progress_timer = QTimer(self, interval=450)
+        self.progress_timer.timeout.connect(self.advance_progress)
+
+    def refresh_bubble_theme(self):
+        if COLORS['surface'] == LIGHT_COLORS['surface']:
+            self.bubble.setStyleSheet('')
+        else:
+            self.bubble.setStyleSheet('''
+                QFrame#workUserBubble { background:#5A1D24; border-radius:16px; }
+                QFrame#workUserBubble QTextBrowser { color:#F6F2F3; }
+            ''')
+
+    def advance_progress(self):
+        self.progress_phase = (self.progress_phase + 1) % 4
+        self.status.setText('正在执行任务中' + '.' * self.progress_phase)
 
     def set_playing(self, playing):
         if self.speaker is not None:
@@ -256,9 +307,16 @@ class TurnView(QWidget):
         self.answer.setVisible(bool(visible_replies))
         if self.speaker is not None:
             self.speaker.setVisible(self.turn.state == 'done' and bool(replies))
-        status = {'pending':'正在处理…','failed':'回复失败','stopped':'已停止','done':''}[self.turn.state]
-        self.status.setText(status)
-        self.status.setVisible(bool(status) and (self.turn.state != 'pending' or not visible_replies))
+        status = {'pending':'正在执行任务中','failed':'回复失败','stopped':'已停止','done':''}[self.turn.state]
+        if self.turn.state == 'pending':
+            if not self.progress_timer.isActive():
+                self.progress_phase = 0
+                self.status.setText(status)
+                self.progress_timer.start()
+        else:
+            self.progress_timer.stop()
+            self.status.setText(status)
+        self.status.setVisible(bool(status))
         self.changed_files.detail.setFixedHeight(min(170,30 + self.changed_files.detail.fontMetrics().lineSpacing()*len(files)))
         self.changed_files.set_content(f'修改的文件（{len(files)}）','\n'.join(files.values()))
         labels = []
@@ -286,6 +344,7 @@ class TurnView(QWidget):
 
 class WorkspaceHistory(QScrollArea):
     play_requested = Signal(object, str)
+    preview_requested = Signal(object, QUrl)
 
     def __init__(self, select_picture, reply_icons=None):
         super().__init__()
@@ -329,7 +388,8 @@ class WorkspaceHistory(QScrollArea):
         for index,turn in enumerate(turns):
             new = turn not in self.rows
             if new:
-                self.rows[turn] = TurnView(turn,self.select_picture,self.reply_icons,self.play_requested.emit)
+                self.rows[turn] = TurnView(turn,self.select_picture,self.reply_icons,self.play_requested.emit,
+                                           self.preview_requested.emit)
             row = self.rows[turn]
             if self.column.indexOf(row) != index:
                 self.column.removeWidget(row)

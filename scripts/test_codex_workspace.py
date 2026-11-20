@@ -8,15 +8,19 @@ import time
 import unittest
 from unittest.mock import patch
 
-from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
-from PySide6.QtGui import QColor, QDragEnterEvent, QDragLeaveEvent, QDropEvent, QImage, QPixmap
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, Qt, QUrl
+from PySide6.QtGui import QColor, QDragEnterEvent, QDragLeaveEvent, QDropEvent, QImage, QMouseEvent, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QLineEdit, QMenu, QMessageBox, QPushButton
 
 from client_codex import CodexAppServer
 from client_markup import Mark
 from client_tool_library import discover_library
-from client_workspace import Picture, WorkspacePane, WorkspaceTurn
+from client_workspace import CodexRun, Picture, WorkspacePane, WorkspaceTurn
+from client_workspace_history import WorkspaceHistory
+from client_workspace_window import WorkspaceWindow
+from client_shell import DesktopLauncher
+from types import SimpleNamespace
 
 
 SERVER = '''
@@ -214,6 +218,300 @@ class CodexWorkspaceTests(unittest.TestCase):
         while not predicate() and time.monotonic() < deadline:
             QTest.qWait(10)
         self.assertTrue(predicate())
+
+    def test_workspace_drag_docks_folds_and_restores_the_same_chat(self):
+        with TemporaryDirectory() as directory:
+            server = CodexAppServer(Path(directory)/'codex')
+            pane = WorkspacePane(QPixmap(),'',lambda: None,server,lambda: None)
+            window = WorkspaceWindow(pane,lambda target: target.hide())
+            window.show()
+            self.addCleanup(window.hide)
+            self.app.processEvents()
+            area = window.screen().availableGeometry()
+            window.resize(min(650,area.width()),min(550,area.height()))
+            window.move(area.topLeft())
+            floating_size = window.size()
+            pane.input.setPlainText('保留正在编辑的草稿')
+            project_path = Path(directory)/'second'
+            project_path.mkdir()
+            second = pane.add_project(project_path,select=False)
+
+            def drag(offset, during=None):
+                title = window.title_label
+                origin = title.mapToGlobal(QPoint(30,15))
+                for kind,global_position,button,buttons in (
+                    (QEvent.Type.MouseButtonPress,origin,Qt.MouseButton.LeftButton,Qt.MouseButton.LeftButton),
+                    (QEvent.Type.MouseMove,origin+offset,Qt.MouseButton.NoButton,Qt.MouseButton.LeftButton),
+                    (QEvent.Type.MouseButtonRelease,origin+offset,Qt.MouseButton.LeftButton,Qt.MouseButton.NoButton),
+                ):
+                    event = QMouseEvent(kind,QPointF(title.mapFromGlobal(global_position)),QPointF(global_position),
+                                        button,buttons,Qt.KeyboardModifier.NoModifier)
+                    self.app.sendEvent(title,event)
+                    if kind == QEvent.Type.MouseMove and during is not None:
+                        during()
+                self.app.processEvents()
+
+            def check_outline():
+                self.assertIsNone(window.docked_screen)
+                self.assertTrue(window.dock_overlay.isVisible())
+                self.assertIsNone(window.dock_overlay.frame)
+                self.assertEqual(window.dock_overlay.geometry().topRight(),area.topRight())
+                self.assertEqual(window.dock_overlay.geometry().bottomRight(),area.bottomRight())
+                self.assertEqual(window.width(),floating_size.width())
+
+            def wait_for_motion():
+                self.assertIsNotNone(window.dock_overlay.frame)
+                window.dock_motion.setCurrentTime(window.dock_motion.duration()//2)
+                self.assertNotEqual(window.dock_overlay.frame_rect,window.dock_motion.startValue())
+                self.assertNotEqual(window.dock_overlay.frame_rect,window.dock_motion.endValue())
+                self.wait(lambda: not window.dock_overlay.isVisible())
+                self.assertEqual(window.windowOpacity(),1.)
+
+            drag(QPoint(max(30,area.width()-window.width()-10),0),check_outline)
+            wait_for_motion()
+            self.assertEqual(window.width(),area.width()//4)
+            self.assertEqual(window.geometry().topRight(),area.topRight())
+            self.assertEqual(window.geometry().bottomRight(),area.bottomRight())
+            self.assertFalse(pane.preview.isVisible())
+            self.assertLess(window.fold.geometry().right(),window.panel_rect().left())
+            self.assertIsNone(window.findChild(QPushButton,'workDockProjects'))
+            self.assertTrue(pane.project_picker.isVisible())
+            self.assertFalse(pane.chat_picker.isVisible())
+            self.assertFalse(pane.sidebar.isVisible())
+            self.assertEqual(pane.project_picker.toolTip(),'项目 · 未选项目')
+            menu = pane.project_picker.menu()
+            menu.aboutToShow.emit()
+            next(action for action in menu.actions() if action.text() == 'second').trigger()
+            self.assertIn('second',pane.project_picker.toolTip())
+            self.assertTrue(pane.chat_picker.isVisible())
+            self.assertIn('选择或新建聊天',pane.chat_picker.toolTip())
+            self.assertFalse(pane.chat_title.isVisible())
+            menu.aboutToShow.emit()
+            self.assertTrue(next(action for action in menu.actions() if action.text() == 'second').isChecked())
+            self.app.processEvents()
+            alternate = pane.add_chat(second,'其他对话')
+            chat_menu = pane.chat_picker.menu()
+            chat_menu.aboutToShow.emit()
+            next(action for action in chat_menu.actions() if action.text() == '其他对话').trigger()
+            self.assertIs(pane.active_chat,alternate)
+            self.assertIn('其他对话',pane.chat_picker.toolTip())
+            pane.set_chat_title(alternate,'已更名对话')
+            self.assertEqual(pane.chat_picker.toolTip(),'对话 · 已更名对话')
+            menu.aboutToShow.emit()
+            next(action for action in menu.actions() if action.text() == '未选项目').trigger()
+            self.assertFalse(pane.chat_picker.isVisible())
+            QTest.mouseClick(window.fold,Qt.MouseButton.LeftButton)
+            self.assertTrue(window.collapsed)
+            wait_for_motion()
+            self.assertEqual(window.geometry().right(),area.right())
+            self.assertEqual(window.size(),window.fold.size())
+            self.assertFalse(pane.isVisible())
+            QTest.mouseClick(window.fold,Qt.MouseButton.LeftButton)
+            self.assertFalse(window.collapsed)
+            wait_for_motion()
+            self.assertEqual(pane.input.toPlainText(),'保留正在编辑的草稿')
+            def check_floating_outline():
+                self.assertIsNotNone(window.docked_screen)
+                self.assertTrue(window.dock_overlay.isVisible())
+                self.assertIsNone(window.dock_overlay.frame)
+                self.assertEqual(window.dock_overlay.size(),floating_size)
+                self.assertEqual(window.geometry().topRight(),area.topRight())
+
+            drag(QPoint(-80,0),check_floating_outline)
+            wait_for_motion()
+            self.assertIsNone(window.docked_screen)
+            self.assertEqual(window.size(),floating_size)
+            self.assertFalse(pane.preview.isVisible())
+            self.assertFalse(pane.project_picker.isVisible())
+            self.assertFalse(pane.chat_picker.isVisible())
+
+    def test_completed_project_outputs_update_the_docked_preview(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            server = CodexAppServer(root/'codex')
+            pane = WorkspacePane(QPixmap(),'',lambda: None,server,lambda: None)
+            window = WorkspaceWindow(pane,lambda target: target.hide())
+            window.show()
+            self.addCleanup(window.hide)
+            project = root/'project'
+            project.mkdir()
+            (project/'report.pdf').write_bytes(b'%PDF')
+            report = project/'project summary.md'
+            report.write_text('# 工作成果',encoding='utf-8')
+            image = QImage(80,60,QImage.Format.Format_RGB32)
+            image.fill(QColor('#ed2c53'))
+            self.assertTrue(image.save(str(project/'result.png')))
+            self.assertTrue(image.save(str(root/'outside-preview.png')))
+            pane.add_project(project)
+            window.dock(window.screen())
+            self.app.processEvents()
+            chat = pane.active_chat
+            turn = WorkspaceTurn('生成预览',items={
+                'reply':{'type':'agentMessage','text':'[外部预览图](../outside-preview.png) '
+                                                     '[报告](project%20summary.md) [图片](result.png)'},
+                'changes':{'type':'fileChange','status':'completed','changes':[
+                    {'path':'result.png','kind':{'type':'add'}},
+                    {'path':'deleted.txt','kind':{'type':'delete'}},
+                ]},
+            })
+            chat.turns.append(turn)
+            run = CodexRun(chat,turn,project,{})
+            chat.request = run
+            self.assertTrue(pane.preview.isHidden())
+            self.assertFalse(pane.preview.findChildren(QComboBox))
+            self.assertFalse(pane.preview.findChildren(QPushButton))
+            pane.finish_codex(run,'done')
+            self.assertTrue(pane.preview.isHidden())
+
+            preview = WorkspaceTurn('制作预览图',items={
+                'reply':{'type':'agentMessage','text':'**预览图**：[查看预览](result.png)'},
+            })
+            run = CodexRun(chat,preview,project,{})
+            chat.turns.append(preview)
+            chat.request = run
+            pane.finish_codex(run,'done')
+            self.app.processEvents()
+            self.assertTrue(pane.preview.isVisible())
+            self.assertEqual(pane.preview.image.pixelColor(0,0).name(),'#ed2c53')
+            self.assertEqual(pane.preview_motion.state(),pane.preview_motion.State.Running)
+            pane.preview_motion.setCurrentTime(60)
+            self.assertGreater(pane.split.sizes()[1],0)
+            self.assertLess(pane.split.sizes()[1],pane.split.height()//2)
+            self.wait(lambda: pane.preview_motion.state() == pane.preview_motion.State.Stopped)
+            upper,lower = pane.split.sizes()
+            self.assertLessEqual(abs(upper-lower),max(5,upper//6))
+            pane.input.setPlainText('保留聊天草稿')
+            QTest.mouseDClick(pane.preview,Qt.MouseButton.LeftButton)
+            self.assertIs(pane.pages.currentWidget(),pane.editor)
+            self.assertTrue(pane.preview.isHidden())
+            self.assertFalse(pane.pictures)
+            pane.editor.cancelled.emit()
+            self.assertTrue(pane.preview.isVisible())
+            self.assertFalse(pane.pictures)
+            self.wait(lambda: pane.preview_motion.state() == pane.preview_motion.State.Stopped)
+
+            QTest.mouseDClick(pane.preview,Qt.MouseButton.LeftButton)
+            self.app.processEvents()
+            mark = Mark('line',((10,30),(70,30)))
+            pane.editor.canvas.commit((mark,))
+            done = pane.editor.done_button
+            self.assertTrue(pane.editor.rect().contains(done.mapTo(pane.editor,done.rect().bottomRight())))
+            QTest.mouseClick(done,Qt.MouseButton.LeftButton)
+            self.assertIs(pane.pages.currentWidget(),pane.chat)
+            self.assertTrue(pane.preview.isVisible())
+            self.assertEqual(pane.input.toPlainText(),'保留聊天草稿')
+            self.assertEqual(len(pane.pictures),1)
+            self.assertEqual(pane.pictures[0].marks,(mark,))
+            self.assertIsNone(chat.request)
+            self.assertEqual(QImage(str(project/'result.png')).pixelColor(40,30).name(),'#ed2c53')
+
+            image.fill(QColor('#2373b3'))
+            self.assertTrue(image.save(str(project/'model-preview.png')))
+            output = WorkspaceTurn('制作模型预览',items={
+                'changes':{'type':'fileChange','status':'completed','changes':[
+                    {'path':'model-preview.png','kind':{'type':'add'}},
+                ]},
+            })
+            run = CodexRun(chat,output,project,{})
+            chat.turns.append(output)
+            chat.request = run
+            pane.finish_codex(run,'done')
+            self.assertTrue(pane.preview.isVisible())
+            self.assertIn('model-preview.png',pane.preview.toolTip())
+            self.assertEqual(pane.preview.image.pixelColor(0,0).name(),'#2373b3')
+            self.assertEqual(pane.preview.image_transition.state(),pane.preview.image_transition.State.Running)
+
+            later = WorkspaceTurn('生成 PDF',items={'reply':{'type':'agentMessage','text':'[预览](report.pdf)'}})
+            run = CodexRun(chat,later,project,{})
+            chat.turns.append(later)
+            chat.request = run
+            pane.finish_codex(run,'done')
+            self.assertTrue(pane.preview.isHidden())
+            self.assertTrue(pane.preview.image.isNull())
+
+            bad_link = pane.history.rows[turn].answer
+            bad_link.anchorClicked.emit(QUrl('../outside-preview.png'))
+            self.assertTrue(pane.preview.isHidden())
+            answer = pane.history.rows[preview].answer
+            cursor = answer.document().find('查看预览')
+            self.assertFalse(cursor.isNull())
+            cursor.setPosition(cursor.selectionStart()+1)
+            pane.history.ensureWidgetVisible(answer,0,10)
+            self.app.processEvents()
+            point = answer.cursorRect(cursor).center()
+            self.assertEqual(answer.anchorAt(point),'result.png')
+            QTest.mouseClick(answer.viewport(),Qt.MouseButton.LeftButton,pos=point)
+            self.assertTrue(pane.preview.isVisible())
+            self.assertEqual(pane.preview.image.pixelColor(0,0).name(),'#ed2c53')
+            self.assertEqual(pane.preview_motion.state(),pane.preview_motion.State.Running)
+            self.wait(lambda: pane.preview_motion.state() == pane.preview_motion.State.Stopped)
+            window.undock()
+            self.assertTrue(pane.preview.isVisible())
+            self.assertEqual(pane.preview.image.pixelColor(0,0).name(),'#ed2c53')
+            pane.new_chat(chat.item.parent())
+            self.assertTrue(pane.preview.isHidden())
+
+    def test_progress_remains_below_reply_and_completion_notice_disappears(self):
+        turn = WorkspaceTurn('测试', items={'message':{'type':'agentMessage','text':'处理中'}})
+        history = WorkspaceHistory(lambda _: None)
+        history.resize(500,400)
+        history.show()
+        history.render([turn])
+        row = history.rows[turn]
+        self.assertTrue(row.status.isVisible())
+        self.assertTrue(row.status.text().startswith('正在执行任务中'))
+        first = row.status.text()
+        QTest.qWait(500)
+        self.assertNotEqual(row.status.text(), first)
+        turn.state = 'done'
+        history.render([turn])
+        self.assertFalse(row.status.isVisible())
+        self.assertFalse(row.progress_timer.isActive())
+        launcher = DesktopLauncher(SimpleNamespace(avatar=QPixmap()), Path('.'), ())
+        launcher.show()
+        launcher.show_task_completed('测试')
+        self.assertTrue(launcher.task_notice.isVisible())
+        self.assertEqual(launcher.task_notice.text(), '任务已完成')
+        launcher.task_notice_timer.timeout.emit()
+        self.assertFalse(launcher.task_notice.isVisible())
+        launcher.close()
+        history.close()
+
+    def test_hidden_workspace_prompts_and_sends_all_answers(self):
+        with TemporaryDirectory() as directory:
+            server = CodexAppServer(Path(directory)/'codex')
+            pane = WorkspacePane(QPixmap(), '', lambda: None, server, lambda: None)
+            pane.show()
+            chat = pane.active_chat
+            run = CodexRun(chat, WorkspaceTurn('测试'), Path(directory), {})
+            run.turn_id = 'turn'
+            chat.request = run
+            pane.codex_chats['thread'] = chat
+            pane.hide()
+            questions = [
+                {'id':'scope','question':'选择范围','options':[{'label':'界面'}], 'isOther':True},
+                {'id':'details','question':'补充说明'},
+            ]
+            completed = []
+            pane.task_completed.connect(completed.append)
+            with patch.object(server, 'answer_questions', return_value=True) as answer:
+                pane.codex_approval('request', 'item/tool/requestUserInput',
+                                    {'threadId':'thread','turnId':'turn','questions':questions})
+                self.wait(lambda: pane.open_question is not None)
+                dialog = pane.open_question
+                self.assertTrue(dialog.isVisible())
+                dialog.findChild(QComboBox).setEditText('其他范围')
+                self.assertFalse(dialog.confirm.isEnabled())
+                field = next(field for field in dialog.findChildren(QLineEdit)
+                             if field.accessibleName() == '补充说明')
+                field.setText('额外要求')
+                dialog.confirm.click()
+                answer.assert_called_once_with('request', {
+                    'scope':{'answers':['其他范围']}, 'details':{'answers':['额外要求']}})
+            pane.finish_codex(run, 'failed', '失败')
+            self.assertEqual(completed, [])
+            pane.close()
+            server.close()
 
     def test_library_lists_only_project_extensions_and_refreshes_while_open(self):
         with TemporaryDirectory() as directory:
@@ -514,6 +812,8 @@ class CodexWorkspaceTests(unittest.TestCase):
             pictures = pane.pictures
             self.wait(lambda: pane.attachment.viewport().height() >= pane.attachment_row.sizeHint().height())
             pane.input.setPlainText('检查截图')
+            completed = []
+            pane.task_completed.connect(completed.append)
             pane.submit()
             self.wait(pane.approval_card.isVisible)
             self.assertIn('Get-Location',pane.approval_detail.toPlainText())
@@ -525,6 +825,7 @@ class CodexWorkspaceTests(unittest.TestCase):
             pane.allow.click()
             self.wait(lambda:pane.request is None)
             self.assertIn('处理完成',pane.history.toPlainText())
+            self.assertEqual(len(completed), 1)
             self.assertNotIn('cwd result',pane.history.toPlainText())
             row = pane.history.rows[chat.turns[-1]]
             files = row.changed_files
@@ -573,11 +874,19 @@ class CodexWorkspaceTests(unittest.TestCase):
             pane.submit()
             self.wait(pane.approval_card.isVisible)
             self.assertEqual(pane.allow.text(), '回答问题')
-            def answer(dialog):
-                dialog.findChild(QComboBox).setCurrentIndex(0)
-                return QDialog.DialogCode.Accepted
-            with patch('client_workspace.ProjectDialog.exec',new=answer):
-                pane.allow.click()
+            self.wait(lambda: pane.open_question is not None)
+            dialog = pane.open_question
+            self.assertTrue(dialog.isVisible())
+            self.assertFalse(dialog.confirm.isEnabled())
+            dialog.cancel.click()
+            self.assertIsNotNone(pane.request)
+            self.assertTrue(pane.approval_card.isVisible())
+            pane.allow.click()
+            self.assertIsNotNone(pane.open_question)
+            dialog = pane.open_question
+            dialog.findChild(QComboBox).setCurrentIndex(0)
+            self.assertTrue(dialog.confirm.isEnabled())
+            dialog.confirm.click()
             self.wait(lambda:pane.request is None)
             self.assertIn('第一步：检查界面',pane.history.toPlainText())
             menu.clear()

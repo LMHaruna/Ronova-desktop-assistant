@@ -1,17 +1,18 @@
-"""Memory management embedded in the existing light phone settings."""
+"""Long-term memory and relationship settings for the companion."""
 from datetime import datetime
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QComboBox, QLineEdit, QPlainTextEdit,
+from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLineEdit, QPlainTextEdit,
     QScrollArea, QVBoxLayout, QWidget)
 from client_memory import CATEGORIES, STAGES
 from client_fonts import emphasis_font
 from client_panels import AnimatedStack, SettingsRow, Switch, button, group, navigation, note
 from client_theme import themed
 
-SOURCES={'automatic':'自动识别','explicit':'明确记住','manual':'手动编辑','restored':'恢复旧版本'}
+SOURCES={'automatic':'自动识别','explicit':'明确记住','manual':'手动编辑','restored':'恢复旧版本','assisted':'根据修改要求整理'}
 REASONS={'baseline':'升级时保留的原记录','manual_add':'手动添加','manual_edit':'手动修改',
     'explicit':'明确要求记住','automatic_add':'自动追加','automatic_update':'明确纠正后更新',
-    'protected_add':'追加保存，旧信息保留','restore':'恢复旧版本'}
+    'protected_add':'追加保存，旧信息保留','restore':'恢复旧版本',
+    'assisted_add':'根据修改要求添加','assisted_update':'根据修改要求更新'}
 
 
 def plain_note(text):
@@ -25,7 +26,8 @@ class MemoryPane(QWidget):
     def __init__(self, main, back):
         super().__init__(); self.main=main; self.back=back
         self.setObjectName('memoryPage')
-        self.pending=None; self.seen_revision=-1; self.edit_id=None
+        self.pending=None; self.pending_request=False; self.request_history=[]; self.request_text=''
+        self.seen_revision=-1; self.edit_id=None
         self.confirm_action='delete'
         self.list_signature=None
         outer=QVBoxLayout(self); outer.setContentsMargins(0,0,0,0); outer.setSpacing(0)
@@ -49,17 +51,38 @@ class MemoryPane(QWidget):
         body.addWidget(group([SettingsRow('使用长期记忆',toggle=self.enabled),
             SettingsRow('自动记忆',toggle=self.automatic),self.stage_row,affinity]))
         body.addWidget(self.reset_button)
-        body.addWidget(note('成功回复后，当前模型会额外进行一次后台文字分析，自动更新记忆与关系。记忆存于本机，对话时提供给模型。'))
+        body.addWidget(note('成功回复后，模型会在后台分析对话，并在记忆变化时整理成一段文字。后台调用可能产生费用；记忆保存在本机，对话时可供模型参考。'))
         self.analysis_label=note(''); self.analysis_label.setMinimumHeight(32); body.addWidget(self.analysis_label)
-        add=button('添加记忆',lambda:self.edit(None),'primaryButton'); body.addWidget(add)
         self.count_label=note(''); body.addWidget(self.count_label)
         self.list_body=QWidget(); self.list_layout=QVBoxLayout(self.list_body)
         self.list_layout.setContentsMargins(0,0,0,0); self.list_layout.setSpacing(10)
         body.addWidget(self.list_body)
+        body.addWidget(note('修改记忆'))
+        request_card=QWidget(); request_card.setObjectName('groupCard')
+        request_layout=QVBoxLayout(request_card); request_layout.setContentsMargins(12,12,12,12); request_layout.setSpacing(8)
+        self.memory_request=QPlainTextEdit(); self.memory_request.setAccessibleName('记忆修改要求')
+        self.memory_request.setPlaceholderText('例如：我现在喜欢咖啡，请更新我的饮品偏好。')
+        self.memory_request.setFixedHeight(76)
+        self.memory_request.setStyleSheet(themed('background:$background;color:$text;border:1px solid $border;'
+                                                  'border-radius:10px;padding:8px;placeholder-text-color:$muted;'))
+        request_layout.addWidget(self.memory_request)
+        self.memory_reply=plain_note(''); self.memory_reply.hide(); request_layout.addWidget(self.memory_reply)
+        self.request_button=button('发送修改要求',self.request_change,'primaryButton')
+        self.request_button.setAccessibleName('发送记忆修改要求')
+        request_layout.addWidget(self.request_button); body.addWidget(request_card)
+        self.manage_button=button('管理记忆',self.manage_records,'secondaryButton')
+        body.addWidget(self.manage_button)
         self.clear_button=button('清除全部记忆',lambda:self.confirm_delete(None),'secondaryButton')
         body.addWidget(self.clear_button); body.addStretch(1)
 
         layout,body=self.page(self.editor,'记忆',self.show_home)
+        record_navigation=QHBoxLayout()
+        self.previous_record=button('上一条',lambda:self.step_record(-1),'secondaryButton')
+        self.record_position=note('')
+        self.record_position.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.next_record=button('下一条',lambda:self.step_record(1),'secondaryButton')
+        record_navigation.addWidget(self.previous_record); record_navigation.addWidget(self.record_position,1); record_navigation.addWidget(self.next_record)
+        body.addLayout(record_navigation)
         body.addWidget(note('分类'))
         self.category=QComboBox(); self.category.setAccessibleName('记忆分类')
         self.category.view().setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -81,6 +104,7 @@ class MemoryPane(QWidget):
         self.source_label=plain_note(''); body.addWidget(self.source_label)
         self.history_button=button('查看来源与更新历史',self.show_versions,'secondaryButton'); body.addWidget(self.history_button)
         self.content.textChanged.connect(lambda:self.length_label.setText(f'{len(self.content.toPlainText().strip())} / 300 字'))
+        self.content.document().modificationChanged.connect(lambda _changed:self.refresh_record_navigation())
         self.save_button=button('保存记忆',self.save,'primaryButton'); body.addWidget(self.save_button)
         self.delete_button=button('删除这条记忆',lambda:self.confirm_delete(self.edit_id),'secondaryButton')
         body.addWidget(self.delete_button)
@@ -147,7 +171,27 @@ class MemoryPane(QWidget):
         self.source_label.setText(('来源：'+SOURCES.get(record['source'],record['source'])+' · '+date_text(record['updated'])+
             ('\n原话依据：'+record['evidence'] if record['evidence'] else '')) if record else '')
         self.history_button.setVisible(record is not None)
+        self.refresh_record_navigation()
         self.status_label.clear(); self.stack.setCurrentWidget(self.editor); self.content.setFocus()
+
+    def refresh_record_navigation(self):
+        records=self.main.controller.memory.snapshot()['memories']
+        index=next((i for i,row in enumerate(records) if row['id']==self.edit_id),-1)
+        self.record_position.setText(f'{index+1} / {len(records)}' if index>=0 else '')
+        self.previous_record.setVisible(index>=0); self.next_record.setVisible(index>=0)
+        clean=not self.content.document().isModified()
+        self.previous_record.setEnabled(clean and index>0)
+        self.next_record.setEnabled(clean and index>=0 and index+1<len(records))
+
+    def manage_records(self):
+        records=self.main.controller.memory.snapshot()['memories']
+        if records: self.edit(records[0])
+
+    def step_record(self, direction):
+        records=self.main.controller.memory.snapshot()['memories']
+        index=next((i for i,row in enumerate(records) if row['id']==self.edit_id),-1)
+        target=index+direction
+        if index>=0 and 0<=target<len(records): self.edit(records[target])
 
     def save(self):
         self.run(lambda:self.main.controller.save_memory(self.content.toPlainText(),self.category.currentData(),
@@ -230,7 +274,19 @@ class MemoryPane(QWidget):
         else: self.run(lambda:self.main.controller.delete_memory(self.delete_id) if self.delete_id else self.main.controller.clear_memories())
 
     def controls(self):
-        return (self.save_button,self.confirm_button,self.enabled,self.automatic,self.name_save,self.reset_button,self.oath_reset,self.history_button,self.load_versions_button)
+        return (self.save_button,self.confirm_button,self.enabled,self.automatic,self.name_save,self.reset_button,self.oath_reset,self.history_button,self.load_versions_button,self.request_button)
+
+    def request_change(self):
+        if self.pending: return
+        instruction=self.memory_request.toPlainText().strip()
+        try:
+            self.pending=self.main.controller.request_memory_change(instruction,self.request_history[-4:])
+            self.pending_request=True; self.request_text=instruction
+            self.memory_request.setEnabled(False)
+            self.status_label.setText('正在理解并修改记忆…')
+            for control in self.controls(): control.setEnabled(False)
+        except (ValueError,RuntimeError) as exc:
+            self.status_label.setText(str(exc))
 
     def run(self, operation):
         if self.pending: return
@@ -244,8 +300,22 @@ class MemoryPane(QWidget):
         if self.pending and self.pending.done():
             success=self.pending.result(); self.pending=None
             for control in self.controls(): control.setEnabled(True)
-            self.status_label.setText('已保存' if success else self.main.controller.snapshot()['message'] or '未完成，请重试')
-            if success: self.show_home()
+            if self.pending_request:
+                self.pending_request=False; self.memory_request.setEnabled(True)
+                if isinstance(success,dict):
+                    self.memory_request.clear()
+                    self.request_history.append({'user':self.request_text,'assistant':success['reply']})
+                    self.request_history=self.request_history[-4:]
+                    outcome='已更新记忆。' if success['changed'] else '尚未修改记忆。'
+                    if success['changed'] and not success['summary_ready']:
+                        outcome+='记忆已保存，段落将在后续对话中重新整理。'
+                    self.memory_reply.setText(outcome+'\n'+success['reply']); self.memory_reply.show()
+                    self.status_label.clear()
+                else:
+                    self.status_label.setText(self.main.controller.snapshot()['message'] or '未完成，请重试')
+            else:
+                self.status_label.setText('已保存' if success else self.main.controller.snapshot()['message'] or '未完成，请重试')
+                if success: self.show_home()
             force=True
         store=self.main.controller.memory
         if self.isVisible():
@@ -268,20 +338,20 @@ class MemoryPane(QWidget):
         self.affinity_bar.setValue(snapshot['affinity'])
         self.relationship_label.setText('当前：'+STAGES[snapshot['stage']]+' · 称呼：'+snapshot['appellation'])
         records=snapshot['memories']
-        signature=tuple((row['id'],row['updated']) for row in records)
+        summary=snapshot['memory_summary']
+        signature=(summary,tuple((row['id'],row['updated']) for row in records))
         if self.list_signature==signature: return
         self.list_signature=signature
         while self.list_layout.count():
             old=self.list_layout.takeAt(0).widget(); old.hide(); old.deleteLater()
-        self.count_label.setText(f'已保存 {len(records)} 条记忆')
+        self.count_label.setText('长期记忆')
         self.clear_button.setEnabled(bool(records))
-        if not records: self.list_layout.addWidget(note('还没有记忆。对话时会自动识别身份、偏好、边界和重要事情，也可以手动添加。'))
-        for record in records:
+        self.manage_button.setEnabled(bool(records))
+        if not records:
+            self.list_layout.addWidget(note('还没有长期记忆。对话后会自动整理值得记住的信息。'))
+        else:
             card=QWidget(); card.setObjectName('groupCard'); layout=QVBoxLayout(card)
-            layout.setContentsMargins(12,8,12,8); layout.setSpacing(4)
-            layout.addWidget(note(CATEGORIES[record['category']]+(' · 自动记忆' if record['source']=='automatic' else '')))
-            preview=' '.join(record['content'].split()); preview=preview[:60]+'…' if len(preview)>60 else preview
-            row=SettingsRow(preview,callback=lambda value=record:self.edit(value))
-            if len(preview)>28: row.setMinimumHeight(80)
-            row.title.setTextFormat(Qt.TextFormat.PlainText); row.title.setWordWrap(True)
-            layout.addWidget(row); self.list_layout.addWidget(card)
+            layout.setContentsMargins(14,12,14,12)
+            # Existing records remain intact while awaiting model synthesis.
+            text=summary or '；'.join(' '.join(row['content'].split()) for row in reversed(records))
+            layout.addWidget(plain_note(text)); self.list_layout.addWidget(card)

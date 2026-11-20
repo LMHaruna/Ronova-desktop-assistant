@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
@@ -17,10 +18,25 @@ using System.Windows.Forms;
 
 namespace RonovaInstaller
 {
+    internal sealed class Asset
+    {
+        public readonly Uri Url;
+        public readonly long Size;
+        public readonly string Hash;
+
+        public Asset(Uri url, long size, string hash)
+        {
+            Url = url;
+            Size = size;
+            Hash = hash;
+        }
+    }
+
     internal sealed class Release
     {
         public readonly string Folder, Hash, Url;
         public readonly long DownloadSize, InstalledSize;
+        public readonly List<Asset> Parts = new List<Asset>();
 
         public Release(string folder, string hash, long downloadSize, long installedSize, string url)
         {
@@ -35,11 +51,84 @@ namespace RonovaInstaller
         {
             using (var reader = new StreamReader(Assembly.GetExecutingAssembly().GetManifestResourceStream("Ronova.Release")))
             {
-                return new Release(reader.ReadLine(), reader.ReadLine(),
+                var release = new Release(reader.ReadLine(), reader.ReadLine(),
                     long.Parse(reader.ReadLine(), CultureInfo.InvariantCulture),
                     long.Parse(reader.ReadLine(), CultureInfo.InvariantCulture), reader.ReadLine() ?? "");
+                string line;
+                long total = 0;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    var fields = line.Split('\t');
+                    long size = long.Parse(fields[1], CultureInfo.InvariantCulture);
+                    if (size <= 0 || size >= 2147483648L || fields[0].Length != 64)
+                        throw new IOException("安装器的分卷清单无效。");
+                    release.Parts.Add(new Asset(Install.DownloadUrl(fields[2]), size, fields[0]));
+                    total = checked(total + size);
+                }
+                if (release.Parts.Count != 0 && total != release.DownloadSize)
+                    throw new IOException("安装器的分卷总大小无效。");
+                return release;
             }
         }
+    }
+
+    // ZipArchive seeks to the central directory before extracting. Present the
+    // verified files as a single seekable archive without creating another ZIP.
+    internal sealed class MultipartStream : Stream
+    {
+        private readonly IList<FileStream> parts;
+        private readonly long length;
+        private long position;
+
+        public MultipartStream(IList<FileStream> parts)
+        {
+            this.parts = parts;
+            foreach (var part in parts) length += part.Length;
+        }
+
+        public override bool CanRead { get { return true; } }
+        public override bool CanSeek { get { return true; } }
+        public override bool CanWrite { get { return false; } }
+        public override long Length { get { return length; } }
+        public override long Position
+        {
+            get { return position; }
+            set { Seek(value, SeekOrigin.Begin); }
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            long target = checked(offset + (origin == SeekOrigin.End ? length :
+                origin == SeekOrigin.Current ? position : 0));
+            if (target < 0) throw new IOException("无效的 ZIP 偏移量。");
+            return position = target;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int result = 0;
+            long start = 0;
+            foreach (var part in parts)
+            {
+                long end = start + part.Length;
+                if (position < end && count > 0)
+                {
+                    part.Position = position - start;
+                    int read = part.Read(buffer, offset + result, (int)Math.Min(count, end - position));
+                    if (read == 0) throw new EndOfStreamException("下载分卷在解压时被截断。");
+                    position += read;
+                    result += read;
+                    count -= read;
+                    if (position < end) break;
+                }
+                start = end;
+            }
+            return result;
+        }
+
+        public override void Flush() { }
+        public override void SetLength(long value) { throw new NotSupportedException(); }
+        public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
     }
 
     internal static class Install
@@ -169,9 +258,9 @@ namespace RonovaInstaller
             throw new IOException("下载链接重定向次数过多。");
         }
 
-        public static bool Verify(Stream file, Release release, Action<long> update, CancellationToken cancel)
+        public static bool Verify(Stream file, long size, string hash, Action<long> update, CancellationToken cancel)
         {
-            if (file.Length != release.DownloadSize) return false;
+            if (file.Length != size) return false;
             using (var sha = SHA256.Create())
             {
                 var buffer = new byte[1024 * 1024];
@@ -188,7 +277,7 @@ namespace RonovaInstaller
                     }
                 }
                 sha.TransformFinalBlock(buffer, 0, 0);
-                bool valid = String.Equals(BitConverter.ToString(sha.Hash).Replace("-", ""), release.Hash,
+                bool valid = String.Equals(BitConverter.ToString(sha.Hash).Replace("-", ""), hash,
                     StringComparison.OrdinalIgnoreCase);
                 file.Position = 0;
                 return valid;
@@ -241,35 +330,67 @@ namespace RonovaInstaller
         }
 
         public static async Task Execute(Release release, Uri uri, string destination, Action<string, long, long> update,
-            CancellationToken cancel)
+            CancellationToken cancel, HttpMessageHandler transport = null)
         {
             string parent = Path.GetDirectoryName(destination);
             Directory.CreateDirectory(parent);
             string work = Path.Combine(parent, ".ronova-install-" + Guid.NewGuid().ToString("N"));
-            string download = Path.Combine(parent, ".ronova-" + release.Hash.Substring(0, 16) + ".download-part");
-            long cached = File.Exists(download) ? Math.Min(new FileInfo(download).Length, release.DownloadSize) : 0;
+            var assets = release.Parts.Count == 0
+                ? new List<Asset> { new Asset(uri, release.DownloadSize, release.Hash) }
+                : release.Parts;
+            string prefix = Path.Combine(parent, ".ronova-" + release.Hash.Substring(0, 16));
+            var downloads = new List<string>();
+            long cached = 0;
+            for (int i = 0; i < assets.Count; i++)
+            {
+                string file = prefix + (release.Parts.Count == 0 ? "" : "-" + (i + 1).ToString("D3")) + ".download-part";
+                downloads.Add(file);
+                if (File.Exists(file)) cached += Math.Min(new FileInfo(file).Length, assets[i].Size);
+            }
             if (new DriveInfo(Path.GetPathRoot(destination)).AvailableFreeSpace <
                 release.InstalledSize + release.DownloadSize - cached + 8L * 1024 * 1024 * 1024)
                 throw new IOException("磁盘空间不足。请为下载、解压和 Python 环境留出空间。");
             try
             {
-                using (var handler = new HttpClientHandler { AllowAutoRedirect = false })
-                using (var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(2) })
-                    await Download(client, uri, download, release.DownloadSize,
-                        n => update("正在下载", n, release.DownloadSize), cancel).ConfigureAwait(false);
-                update("正在校验下载文件", 0, release.DownloadSize);
-                bool valid;
-                using (var file = File.OpenRead(download))
+                var files = new List<FileStream>();
+                try
                 {
-                    valid = Verify(file, release, n => update("正在校验下载文件", n, release.DownloadSize), cancel);
-                    if (valid)
+                    using (var client = new HttpClient(transport ?? new HttpClientHandler { AllowAutoRedirect = false })
+                           { Timeout = TimeSpan.FromMinutes(2) })
                     {
+                        long completed = 0;
+                        for (int i = 0; i < assets.Count; i++)
+                        {
+                            cancel.ThrowIfCancellationRequested();
+                            var asset = assets[i];
+                            string download = downloads[i];
+                            string label = release.Parts.Count == 0 ? "" : String.Format("（{0}/{1}）", i + 1, assets.Count);
+                            await Download(client, asset.Url, download, asset.Size,
+                                n => update("正在下载" + label, completed + n, release.DownloadSize), cancel).ConfigureAwait(false);
+                            var file = File.OpenRead(download);
+                            files.Add(file);
+                            update("正在校验下载文件" + label, completed, release.DownloadSize);
+                            if (!Verify(file, asset.Size, asset.Hash,
+                                n => update("正在校验下载文件" + label, completed + n, release.DownloadSize), cancel))
+                            {
+                                file.Dispose();
+                                File.Delete(download);
+                                throw new IOException("下载文件" + label + "的 SHA-256 校验失败。重新点击安装可重下该文件。");
+                            }
+                            completed += asset.Size;
+                        }
+                    }
+                    using (var archive = new MultipartStream(files))
+                    {
+                        if (release.Parts.Count != 0 && !Verify(archive, release.DownloadSize, release.Hash,
+                                n => update("正在校验完整资源", n, release.DownloadSize), cancel))
+                            throw new IOException("全部分卷的合并校验失败。请重新下载指定版本的安装器。");
                         update("正在解压", 0, release.InstalledSize);
-                        Extract(file, work, release, n => update("正在解压", n, release.InstalledSize), cancel);
+                        Extract(archive, work, release, n => update("正在解压", n, release.InstalledSize), cancel);
                     }
                 }
-                File.Delete(download);
-                if (!valid) throw new IOException("下载文件的 SHA-256 校验失败。请确认直链后重新下载。");
+                finally { foreach (var file in files) file.Dispose(); }
+                foreach (string download in downloads) File.Delete(download);
                 cancel.ThrowIfCancellationRequested();
                 RequireEmpty(destination);
                 if (Directory.Exists(destination)) Directory.Delete(destination);
@@ -340,10 +461,11 @@ namespace RonovaInstaller
             ClientSize = new Size(560, 248);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
-            AddLabel("资源下载链接", 18);
+            bool multipart = release.Parts.Count != 0;
+            AddLabel(multipart ? "资源来源" : "资源下载链接", 18);
             url.SetBounds(18, 42, 524, 26);
-            url.Text = release.Url;
-            url.ReadOnly = release.Url.Length != 0;
+            url.Text = multipart ? "GitHub Releases（自动下载与校验分卷）" : release.Url;
+            url.ReadOnly = multipart || release.Url.Length != 0;
             AddLabel("安装目录", 82);
             folder.SetBounds(18, 106, 432, 26);
             folder.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RonovaApp", release.Folder);
@@ -354,7 +476,7 @@ namespace RonovaInstaller
                     if (dialog.ShowDialog(this) == DialogResult.OK) folder.Text = dialog.SelectedPath;
             };
             status.SetBounds(18, 144, 524, 20);
-            status.Text = release.Url.Length == 0 ? "请粘贴此版本 ZIP 的 HTTPS 直链。"
+            status.Text = !multipart && release.Url.Length == 0 ? "请粘贴此版本 ZIP 的 HTTPS 直链。"
                 : String.Format("安装需要联网，下载约 {0:F1} GiB。", release.DownloadSize / 1073741824.0);
             progress.SetBounds(18, 170, 524, 16);
             install.SetBounds(354, 205, 90, 28);
@@ -384,7 +506,7 @@ namespace RonovaInstaller
             string target;
             try
             {
-                uri = Install.DownloadUrl(url.Text.Trim());
+                uri = release.Parts.Count == 0 ? Install.DownloadUrl(url.Text.Trim()) : null;
                 target = Install.Destination(folder.Text);
             }
             catch (Exception error)
@@ -405,9 +527,13 @@ namespace RonovaInstaller
                 status.Text = "安装完成。";
                 if (MessageBox.Show(this, "安装完成。现在启动 Ronova 吗？", Text,
                                     MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
-                    Process.Start(new ProcessStartInfo(Path.Combine(target, "Start-Client.cmd")) {
+                {
+                    string launcher = Path.Combine(target, "Ronova.exe");
+                    if (!File.Exists(launcher)) launcher = Path.Combine(target, "Start-Client.cmd");
+                    Process.Start(new ProcessStartInfo(launcher) {
                         WorkingDirectory = target, UseShellExecute = true
                     });
+                }
             }
             catch (OperationCanceledException)
             {

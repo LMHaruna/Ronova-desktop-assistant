@@ -8,11 +8,8 @@ from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import QApplication, QWidget
 
 
-ROOT = Path(__file__).resolve().parent
 UI_FONT_SIZE = 14
 CODE_FONT_SIZE = 13
-MISANS_PATH = Path('design/fonts/MiSansVF.ttf')
-MISANS_FAMILIES = ('MiSans VF', 'MiSans')
 
 WINDOWS_FONTS = {
     'Segoe UI': ('segoeui.ttf', 'seguisb.ttf', 'segoeuib.ttf', 'segoeuii.ttf', 'segoeuiz.ttf'),
@@ -102,26 +99,7 @@ def scaled_size(size):
     return max(1, round(size * (manager.scale if manager else 100) / 100))
 
 
-def misans_family(asset_root=ROOT):
-    families = [name for name in MISANS_FAMILIES if QFontDatabase.hasFamily(name)]
-    if not families:
-        path = Path(asset_root) / MISANS_PATH
-        if path.is_file():
-            installed = QFontDatabase.applicationFontFamilies(QFontDatabase.addApplicationFont(str(path)))
-            families = [name for name in MISANS_FAMILIES if name in installed]
-    return next(iter(families), None)
-
-
-def desktop_icon_font():
-    # Keep desktop icon names at the platform point size regardless of UI scaling.
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
-    if family := misans_family():
-        font.setFamily(family)
-        font.setStyleName('Regular' if 'Regular' in QFontDatabase.styles(family) else '')
-    return font
-
-
-def load_fonts(asset_root=ROOT, scale=None):
+def load_fonts(scale=None):
     app = QGuiApplication.instance()
     if os.name == 'nt':
         system_fonts = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts'
@@ -136,10 +114,6 @@ def load_fonts(asset_root=ROOT, scale=None):
     font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
     families = [name for name in ('Segoe UI', 'Microsoft YaHei UI')
                 if QFontDatabase.hasFamily(name)]
-    if not families:
-        families = font.families()
-        if not QFontDatabase.hasFamily(font.family()) and (family := misans_family(asset_root)):
-            families = [family]
     if families:
         font.setFamilies(families)
     font.setStyleName('')

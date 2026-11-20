@@ -8,6 +8,11 @@ import re
 import shutil
 import stat
 
+if __package__:
+    from .build_desktop_launcher import LAUNCHER_NAME, build_launcher
+else:
+    from build_desktop_launcher import LAUNCHER_NAME, build_launcher
+
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_PYTHON = 'runtime/python/cpython-3.11.17-windows-x86_64-none'
 PYTHON_VENV_MODULE = ROOT / BUNDLED_PYTHON / 'Lib/venv'
@@ -16,18 +21,18 @@ PACKAGE_PATHS = (
     'config/character-knowledge.json', 'config/client-models.json',
     'config/index-voice.json', 'config/realtime-voice.example.json', 'config/voice-selection.json',
     'knowledge', 'licenses',
-    'design/tokens.json', 'design/client-assets', 'design/client-audio', 'design/fonts', 'design/oath-video',
+    'design/tokens.json', 'design/client-assets', 'design/client-audio', 'design/oath-video',
     'design/character-final/avatar-ronova-chibi.png',
     'design/character-final/avatar-ronova-chibi-working.png',
+    'design/character-final/ronova-call.png',
     'design/character-final/relationship-portraits.json',
     'design/character-final/qwen-image-3.0/cleaned',
     'design/desktop-assistant-icons',
-    'design/video-call-live2d/export/ronova-call-v8-face-work',
     'voice-reference/prepared/references.json', 'voice-reference/prepared/asr-near-end.wav',
     'voice-reference/prepared/asr-far-end-echo.wav', 'voice-reference/prepared/indextts-fallback.wav',
     'voice-reference/prepared/qwen-voice-reference.wav',
-    'runtime/echo-tools', 'runtime/indextts-2.5', 'runtime/live2d-prototype-deps',
-    'runtime/models', 'runtime/prerequisites', 'runtime/wheelhouse', 'runtime/wheelhouse-cuda',
+    'runtime/echo-tools', 'runtime/indextts-2.5',
+    'runtime/models', 'runtime/prerequisites', 'runtime/presentmon', 'runtime/wheelhouse', 'runtime/wheelhouse-cuda',
     BUNDLED_PYTHON,
 )
 EXCLUDED_DIRS = {'.git', '.venv', 'venv', '__pycache__', 'node_modules', '.pytest_cache',
@@ -84,10 +89,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('destination', type=Path, help='A new directory for the release files.')
     args = parser.parse_args()
+    presentmon=ROOT/'runtime/presentmon/PresentMon-2.5.1-x64.exe'
+    if not presentmon.is_file() or sha256(presentmon)!='9bec3083069f58f911e6a512f4806db51a27bd096103087bc1d05ef54c80a191':
+        raise ValueError('缺少或损坏的 PresentMon；请先运行 scripts\\run-python.cmd scripts\\download_presentmon.py')
     sources = package_files()
     target = args.destination.resolve()
     target.mkdir(parents=True)
     files = []
+    launcher = build_launcher(target / LAUNCHER_NAME)
+    files.append({'path': LAUNCHER_NAME, 'bytes': launcher.stat().st_size, 'sha256': sha256(launcher)})
     wheel_hashes = set()
     for source in sources:
         relative = source.relative_to(ROOT)

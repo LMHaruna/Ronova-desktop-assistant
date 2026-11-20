@@ -1,6 +1,7 @@
 """Small controls for the workspace sidebar and Codex composer."""
 from math import isfinite
 from pathlib import Path
+from string import Template
 
 from PySide6.QtCore import QByteArray, QPointF, QRectF, QSignalBlocker, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QDesktopServices, QIcon, QPainter, QPen, QPixmap, QTransform
@@ -8,9 +9,18 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QProgressBar, QPushButton, QSlider, QStyle,
                                QStyleOptionViewItem, QToolButton, QTreeWidget, QVBoxLayout, QWidget,
                                QWidgetAction)
-from client_fonts import emphasis_font
+from client_fonts import emphasis_font, typography
 from client_panels import FoldoutChevron, ModelFoldout
-from client_theme import COLORS
+from client_theme import COLORS, LIGHT_COLORS
+
+
+def sidebar_colors():
+    if COLORS['surface'] == LIGHT_COLORS['surface']:
+        return LIGHT_COLORS
+    return {**COLORS,
+            'background': 'qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #302D2E,stop:0.45 #292627,stop:1 #262324)',
+            'surface': '#343031', 'elevated': '#3B3738', 'selection': '#494244', 'text': '#F6F2F3',
+            'muted': '#DED7D9', 'gray': '#CFC3C5', 'border': '#514A4D', 'primary': LIGHT_COLORS['primary']}
 
 
 def tool_icon(glyph, color=COLORS['gray']):
@@ -29,12 +39,29 @@ def tool_icon(glyph, color=COLORS['gray']):
     return icon
 
 
+def tinted_svg_icon(path, replacements):
+    try:
+        svg = Path(path).read_text(encoding='utf-8')
+    except OSError:
+        return QIcon(str(path))
+    for old, new in replacements.items():
+        svg = svg.replace(old, new)
+    pixmap = QPixmap(72, 72)
+    pixmap.setDevicePixelRatio(3)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    QSvgRenderer(QByteArray(svg.encode())).render(painter, QRectF(0, 0, 24, 24))
+    painter.end()
+    return QIcon(pixmap)
+
+
 class LibrarySection(QFrame):
     def __init__(self, title, glyph, toggled):
         super().__init__()
         self.setObjectName('workLibrary')
         self.entries = None
-        self.icon = tool_icon(glyph,COLORS['muted'])
+        self.glyph = glyph
+        self.icon = tool_icon(glyph,sidebar_colors()['muted'])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(3,3,3,3)
         layout.setSpacing(0)
@@ -44,7 +71,8 @@ class LibrarySection(QFrame):
         self.header.setCheckable(True)
         self.header.setCursor(Qt.CursorShape.PointingHandCursor)
         self.header.setMinimumHeight(30)
-        arrow = FoldoutChevron()
+        arrow = self.arrow = FoldoutChevron()
+        arrow.setProperty('chevronColor', sidebar_colors()['muted'])
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(0,0,8,0)
         header_layout.addStretch(1)
@@ -67,11 +95,21 @@ class LibrarySection(QFrame):
         self.empty.setContentsMargins(6,5,6,5)
         contents.addWidget(self.empty)
         self.items.hide()
+        typography().changed.connect(self.fit_items)
 
         foldout = ModelFoldout(body,arrow)
         self.header.toggled.connect(toggled)
         self.header.toggled.connect(foldout.animate)
         layout.addWidget(foldout)
+
+    def refresh_sidebar_theme(self):
+        color = sidebar_colors()['muted']
+        self.icon = tool_icon(self.glyph, color)
+        self.header.setIcon(self.icon)
+        self.arrow.setProperty('chevronColor', color)
+        self.arrow.update()
+        for index in range(self.items.count()):
+            self.items.item(index).setIcon(self.icon)
 
     def set_entries(self, entries):
         if entries == self.entries:
@@ -83,11 +121,16 @@ class LibrarySection(QFrame):
         for entry in entries:
             item = QListWidgetItem(self.icon,entry.name,self.items)
             item.setToolTip(f'{entry.name}\n{entry.source}')
-        self.items.setFixedHeight(25*min(4,len(entries)))
+        self.fit_items()
         self.items.setVisible(bool(entries))
         self.empty.setVisible(not entries)
         self.items.doItemsLayout()
         scroll.setValue(position)
+
+    def fit_items(self):
+        count = min(4, self.items.count())
+        height = sum(max(25, self.items.sizeHintForRow(row)) for row in range(count))
+        self.items.setFixedHeight(height + 2 * self.items.frameWidth())
 
 
 class CodexQuota(QWidget):
@@ -262,7 +305,32 @@ class ProjectSidebar(QFrame):
     def __init__(self):
         super().__init__()
         self.setObjectName('workSidebar')
+        self._ronova_fixed_theme = True
+        self.refresh_sidebar_theme()
         self.setAcceptDrops(True)
+
+    def refresh_sidebar_theme(self):
+        self.setStyleSheet(Template('''
+            QFrame#workSidebar { background:$background; border:1px solid $border; border-radius:20px; }
+            QFrame#workSidebar[folderDropActive="true"] { background:$selection; border-color:$gray; }
+            QFrame#workLibrary { background:$surface; border:1px solid $border; border-radius:12px; }
+            QPushButton#workLibraryHeader { color:$text; background:transparent; text-align:left; padding:5px 9px; }
+            QPushButton#workLibraryHeader:hover { background:$selection; }
+            QListWidget#workLibraryItems { background:transparent; color:$text; border:0; outline:0; font-size:13px; }
+            QListWidget#workLibraryItems::item { color:$text; min-height:25px; padding-left:5px; }
+            QTreeWidget { background:transparent; color:$text; border:0; outline:0; }
+            QTreeWidget::item { color:$text; min-height:30px; padding:2px 5px; }
+            QTreeWidget::item:selected { background:transparent; color:$text; }
+            QLabel#workSection, QLabel#workHint, QLabel#workQuotaTitle { color:$muted; }
+            QLabel#workQuotaValue { color:$text; }
+            QPushButton#workNewChat { background:$surface; color:$text; text-align:left; }
+            QPushButton#workNewChat:hover, QToolButton#workChatMenu:hover { background:$selection; }
+            QPushButton#workAddProject, QToolButton#workChatMenu { color:$muted; background:transparent; }
+            QPushButton#workAddProject:hover { background:$selection; }
+            QWidget#workQuota { border-top:1px solid $border; }
+            QProgressBar#workQuotaBar { background:$border; border:0; border-radius:3px; }
+            QProgressBar#workQuotaBar::chunk { background:$primary; border-radius:3px; }
+        ''').substitute(sidebar_colors()))
 
     @staticmethod
     def folders(mime):
@@ -323,7 +391,7 @@ class WorkspaceTree(QTreeWidget):
         y = QRectF(rect).center().y()
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor(COLORS['muted']),1.25,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
+        painter.setPen(QPen(QColor(sidebar_colors()['muted']),1.25,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
         if self.isExpanded(index):
             painter.drawPolyline([QPointF(x-3,y-1),QPointF(x,y+2),QPointF(x+3,y-1)])
         else:
@@ -339,7 +407,7 @@ class WorkspaceTree(QTreeWidget):
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(COLORS['selection'] if selected else COLORS['elevated']))
+            painter.setBrush(QColor(sidebar_colors()['selection' if selected else 'elevated']))
             highlight = QRectF(option.rect).adjusted(1,2,-1,-2)
             highlight.setLeft(text_rect.left())
             painter.drawRoundedRect(highlight,9,9)
@@ -505,15 +573,15 @@ class EffortSlider(QSlider):
             super().mouseReleaseEvent(event)
 
 
-# General capability tiers from https://learn.chatgpt.com/docs/models.
-# GPT-6 Sol precedes GPT-6.1 Sol in the Sol family. Unranked models
-# retain the relative order supplied by Codex.
+# Unranked models retain the relative order supplied by Codex.
 CODEX_MODEL_ORDER = {
-    'gpt-6-astra': 0,
-    'gpt-6.1-sol': 1,
-    'gpt-6-sol': 2,
-    'gpt-6.1-terra': 3,
-    'gpt-6-luna': 4,
+    'gpt-6.2-astra': 0,
+    'gpt-6.2-sol': 1,
+    'gpt-6-astra': 2,
+    'gpt-6.1-sol': 3,
+    'gpt-6-sol': 4,
+    'gpt-6.1-terra': 5,
+    'gpt-6-luna': 6,
 }
 
 

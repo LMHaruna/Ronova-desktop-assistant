@@ -1,5 +1,6 @@
 """Figma 60:2 assets and geometry, rendered independently of service state."""
 from pathlib import Path
+from functools import cached_property
 import hashlib
 import json
 import math
@@ -283,19 +284,24 @@ class SceneAssets:
         self.svg(painter,'imgVector27')
         painter.restore()
 
-    def paint_video(self, painter, frame):
+    @cached_property
+    def video_portrait(self):
+        portrait = QImage(str(self.path.parent / 'character-final/ronova-call.png'))
+        return self.avatar.toImage() if portrait.isNull() else portrait
+
+    def paint_video(self, painter):
         rect = QRectF(*PHONE_SCREEN)
         painter.save()
         clip = QPainterPath()
         clip.addRoundedRect(rect, PHONE_SCREEN_RADIUS, PHONE_SCREEN_RADIUS)
         painter.setClipPath(clip, Qt.ClipOperation.IntersectClip)
         painter.fillRect(rect, QColor('#101116'))
-        if frame is not None:
-            scale = max(rect.width()/frame.width(), rect.height()/frame.height())
-            size = rect.size()/scale
-            source = QRectF(0,0,size.width(),size.height())
-            source.moveCenter(QRectF(frame.rect()).center())
-            painter.drawImage(rect, frame, source)
+        portrait = self.video_portrait
+        scale = max(rect.width()/portrait.width(), rect.height()/portrait.height())
+        size = rect.size()/scale
+        source = QRectF(0,0,size.width(),size.height())
+        source.moveCenter(QRectF(portrait.rect()).center())
+        painter.drawImage(rect, portrait, source)
         shade = QLinearGradient(rect.topLeft(), rect.bottomLeft())
         for position, alpha in ((0,165),(.19,115),(.29,0),(.69,0),(1,180)):
             shade.setColorAt(position, QColor(6,7,12,alpha))

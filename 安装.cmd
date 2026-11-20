@@ -7,7 +7,7 @@ set PYTHONDONTWRITEBYTECODE=1
 set PYTHONNOUSERSITE=1
 call "%~dp0scripts\run-python.cmd" "%~dp0scripts\setup_desktop.py" --ensure
 if errorlevel 1 goto failed
-echo Ronova 已安装到当前目录。双击 Start-Client.cmd 启动。
+echo Ronova 已安装到当前目录。双击 Ronova.exe 启动。
 pause
 exit /b 0
 

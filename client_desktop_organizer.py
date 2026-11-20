@@ -12,7 +12,7 @@ import uuid
 
 from PySide6.QtCore import (QEasingCurve, QEvent, QMimeData, QObject, QPoint, QPointF,
                             QRect, QRectF, QSize, Qt, QThreadPool, QTimer, QUrl, QVariantAnimation, Signal)
-from PySide6.QtGui import (QColor, QCursor, QDrag, QFontMetrics, QGuiApplication, QIcon, QImage, QPainter,
+from PySide6.QtGui import (QColor, QCursor, QDrag, QGuiApplication, QIcon, QImage, QPainter,
                            QPainterPath, QPalette, QPen, QPixmap, QRegion, QTextLayout, QTextOption)
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QHBoxLayout, QInputDialog,
                                QLabel, QListView, QListWidget, QListWidgetItem, QMenu, QPushButton,
@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QHB
 
 from client_desktop_native import (ExplorerDesktop, FVO_CUSTOMPOSITION, FWF_AUTOARRANGE,
                                    FWF_NOICONS, LAYOUT_FLAGS, SHELL_ID_LIST_MIME, desktop_icon_details)
-from client_fonts import desktop_icon_font
 from client_shell import WINDOW_FLAGS, WindowDrag, constrain
 from client_theme import COLORS, themed
 
@@ -48,7 +47,6 @@ SYSTEM_ICONS = {
 }
 STYLE = themed("""
 QWidget { background: transparent; color: #f8f6fa; }
-QLabel[role="group"] { font-size: 16px; font-weight: bold; }
 QPushButton { border: 1px solid rgba(255,255,255,56); border-radius: 6px; padding: 4px 7px; }
 QPushButton:hover { background: rgba(255,255,255,35); }
 QSlider::groove:horizontal { height: 4px; border-radius: 2px; background: rgba(255,255,255,68); }
@@ -316,11 +314,10 @@ class PanelItemDelegate(QStyledItemDelegate):
         super().__init__(view)
         self.view = view
         self.gap = 3 if view.panel.key == FAVORITES else 6
-        self.label_font = desktop_icon_font()
         self.labels = {}
 
     def label_layout(self, text):
-        font = self.label_font
+        font = self.view.font()
         width = self.view.gridSize().width() - 12
         key = text, font.key(), width
         if key not in self.labels:
@@ -419,6 +416,9 @@ class PanelItems(QListWidget):
         if event.type() == QEvent.Type.DevicePixelRatioChange:
             for key in self.entries:
                 self.refresh_entry(key)
+        elif event.type() == QEvent.Type.FontChange and hasattr(self, 'tiles'):
+            self.tiles.labels.clear()
+            self.measure_labels.start()
         return result
 
     def update_icon_size(self):
@@ -436,7 +436,7 @@ class PanelItems(QListWidget):
         if width != self.gridSize().width():
             self.setGridSize(QSize(width, self.gridSize().height()))
         labels = max((self.tiles.label_layout(item.text())[1] for item in self.entries.values()),
-                     default=QFontMetrics(self.tiles.label_font).height())
+                     default=self.fontMetrics().height())
         needed = self.tiles.TOP + self.iconSize().height() + self.tiles.gap + labels + self.tiles.BOTTOM
         default = 0 if panel.key == FAVORITES else panel.grid.height()
         self.preferred_row_height = max(needed, default)
@@ -776,6 +776,9 @@ class GroupPanel(QWidget):
         self.grid = grid
         self.max_columns = 1 if key == FAVORITES else 3
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        font = QGuiApplication.font()
+        font.setPixelSize(13)
+        self.setFont(font)
         self.setStyleSheet(STYLE)
         self.setMinimumSize(self.width_for(1) - GRID_FLEX, grid.height() + self.EXTRA_HEIGHT - GRID_FLEX)
         self.setMaximumWidth(self.width_for(self.max_columns) + GRID_FLEX)
@@ -793,7 +796,10 @@ class GroupPanel(QWidget):
         header_layout.setSpacing(3)
         self.title = QLabel()
         self.title.setTextFormat(Qt.TextFormat.PlainText)
-        self.title.setProperty('role', 'group')
+        title_font = self.font()
+        title_font.setPixelSize(15)
+        title_font.setBold(True)
+        self.title.setFont(title_font)
         self.title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         header_layout.addWidget(self.title, 1)
@@ -1164,6 +1170,7 @@ class DesktopOrganizer(QObject):
     def favorites_menu(self):
         panel = self.favorites
         menu = QMenu(panel)
+        menu.setFont(panel.font())
         create = menu.addAction('新建分区')
         transparency = menu.addAction('调整背景透明度')
         action = menu.exec(panel.menu.mapToGlobal(panel.menu.rect().bottomLeft()))
@@ -1805,7 +1812,7 @@ class DesktopOrganizer(QObject):
 
     def rename_item(self, panel, key):
         current = self.desktop.edit_name(key)
-        name, confirmed = QInputDialog.getText(panel, '重命名', '新名称', text=current)
+        name, confirmed = self.ask_name(panel, '重命名', '新名称', current)
         if not confirmed or not name or name == current or self.desktop is None:
             return
         updated = self.desktop.rename_item(key, name, int(panel.winId()))
@@ -1886,8 +1893,20 @@ class DesktopOrganizer(QObject):
                 folder_ids[key] = identity
         return self.commit(replace(self.state, placements=placements, order=order, folder_ids=folder_ids), refresh=True)
 
+    @staticmethod
+    def ask_name(parent, title, label, default):
+        dialog = QInputDialog(parent)
+        dialog.setFont(parent.font())
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(label)
+        dialog.setTextValue(default)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        text = dialog.textValue()
+        dialog.deleteLater()
+        return text, accepted
+
     def group_name(self, parent, default=''):
-        name, confirmed = QInputDialog.getText(parent, '桌面分区', '分区名称', text=default)
+        name, confirmed = self.ask_name(parent, '桌面分区', '分区名称', default)
         if not confirmed:
             return ''
         name = name.strip()[:28]
@@ -1923,6 +1942,7 @@ class DesktopOrganizer(QObject):
     def change_transparency(self, panel):
         original = panel.transparency
         dialog = QDialog(panel)
+        dialog.setFont(panel.font())
         dialog.setWindowTitle('分区背景透明度')
         dialog.setStyleSheet(STYLE)
         layout = QVBoxLayout(dialog)
@@ -1961,6 +1981,7 @@ class DesktopOrganizer(QObject):
 
     def group_menu(self, panel):
         menu = QMenu(panel)
+        menu.setFont(panel.font())
         create = menu.addAction('新建分区')
         rename = menu.addAction('重命名分区')
         remove = menu.addAction('删除分区')

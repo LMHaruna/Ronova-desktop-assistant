@@ -147,11 +147,9 @@ def make_review(directory, report):
                          f'<audio controls src="{Path(run["playback_wav"]).name}"></audio>'
                          '<p>原始合成音频（保留模型停顿）</p>'
                          f'<audio controls src="{Path(run["source_wav"]).name}"></audio></section>')
-    font_url = (ROOT/'design/fonts/MiSansVF.ttf').as_uri()
     page = ('<!doctype html><meta charset="utf-8"><title>语音对照试听</title><style>'
-            f'@font-face{{font-family:MiSans;src:url("{font_url}");font-weight:150 700}}'
-            'body{max-width:900px;margin:36px auto;padding:0 20px;font:330 16px/1.7 MiSans,system-ui;background:#15131a;color:#eee}'
+            'body{max-width:900px;margin:36px auto;padding:0 20px;font:16px/1.7 "Segoe UI","Microsoft YaHei UI",sans-serif;background:#15131a;color:#eee}'
             'section{padding:20px;margin:20px 0;background:#24212c;border-radius:12px}'
             'audio{width:100%}h1,h2{font-weight:inherit}h2{font-size:20px}</style>')
     page += '<h1>语音对照试听</h1><p>首音提交时间包含 Qwen 连接，由播放器写入时间估计。试听文件从首音频块开始。自然停顿与数据未及时到达造成的空档分别统计。</p>' + ''.join(cards)
-    (directory/'review.html').write_text(page+'<footer>界面字体由小米 MiSans 提供</footer>',encoding='utf-8')
+    (directory/'review.html').write_text(page,encoding='utf-8')

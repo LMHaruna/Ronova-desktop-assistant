@@ -18,12 +18,12 @@ from PySide6.QtWidgets import QApplication,QLabel,QMenu,QMessageBox,QPushButton,
 from client_controller import DesktopController
 from client_fonts import UI_FONT_SIZE, emphasis_font, load_fonts, scaled_size
 from client_scene import PHONE_BODY, PHONE_SCREEN, SceneAssetError, SceneAssets, phone_clock
-from client_panels import PHONE_CSS, PhoneOverlay
+from client_panels import COMPACT_CHAT_CSS, PhoneOverlay, phone_css
 from client_motion import HeartButton, MotionButton, SpeakingMotion
 from client_affinity import AffinityBar
 from client_shell import (CloseButton, DesktopLauncher, FloatingPanel, PanelTransitions, WINDOW_FLAGS,
                           WindowDrag, available_at, constrain, show_window)
-from client_theme import COLORS, themed
+from client_theme import COLORS, recolor_style, set_theme, themed
 
 PHONE_WINDOW_WIDTH = PHONE_BODY[2] + 34
 
@@ -43,9 +43,11 @@ def stylesheet(colors):
 
 class ClientWindow(QWidget):
     def __init__(self,controller,asset_root=ROOT, *, desktop=False):
-        load_fonts(asset_root, controller.preferences.font_scale)
+        set_theme(controller.preferences.theme)
+        load_fonts(controller.preferences.font_scale)
         super().__init__()
         self.controller = controller
+        self._theme = controller.preferences.theme
         self.desktop = desktop
         self.asset_root = Path(asset_root)
         self.codex = None
@@ -55,9 +57,7 @@ class ClientWindow(QWidget):
             home = (user_credentials_path().parent/'Codex' if controller.root.resolve()==ROOT
                     else controller.root/'data'/'codex')
             self.codex = CodexAppServer(home,self)
-        self.video_renderer = self.video_frame = None
-        self.video_preparing = False
-        self.video_due = 0.
+        self.video_call = False
         self.voice_start = None
         self.phone_submit = None
         self.launcher = self.settings_window = self.workspace_window = self.desktop_organizer = None
@@ -162,18 +162,54 @@ class ClientWindow(QWidget):
         self.reply_alert.hide()
         self.reply_alert_timer = QTimer(self, singleShot=True, interval=8000)
         self.reply_alert_timer.timeout.connect(self.reply_alert.hide)
-        self.settings_pane.setStyleSheet(PHONE_CSS)
+        self.settings_pane.setStyleSheet(phone_css())
         self.settings_window = FloatingPanel('设置', self.settings_pane, (420,654), self.close_assistant_panel)
         actions = (('companion','陪伴系统',self.open_companion),
                    ('screenshot','截图',self.start_screenshot),
-                   ('workspace','若娜瓦加班区',self.open_workspace),
+                   ('workspace','若娜瓦加班区',self.toggle_workspace),
                    ('desktop-organizer','桌面整理',self.open_desktop_organizer),
                    ('settings','设置',self.settings))
         self.launcher = DesktopLauncher(self.assets, root/'design/desktop-assistant-icons', tuple(
-            (key, title, show if key in ('screenshot','desktop-organizer') else lambda panel=key, show=show: self.panels.toggle(panel, show))
+            (key, title, show if key in ('screenshot','desktop-organizer','workspace') else lambda panel=key, show=show: self.panels.toggle(panel, show))
             for key, title, show in actions))
         self.launcher.set_pinned(self.controller.preferences.desktop_pinned)
         self.panels = PanelTransitions(self.launcher)
+
+    def apply_theme(self, theme):
+        if theme == self._theme:
+            return
+        from client_workspace_history import MessageText, TurnView
+        from client_workspace import WorkspacePane
+        old_colors = COLORS.copy()
+        set_theme(theme)
+        self._theme = theme
+        widgets = QApplication.allWidgets()
+        for widget in widgets:
+            style = widget.styleSheet()
+            if style and not getattr(widget, '_ronova_fixed_theme', False):
+                prior = getattr(widget, '_ronova_theme_style', None)
+                if prior is None or style != prior[2]:
+                    original, source = style, old_colors
+                else:
+                    original, source = prior[:2]
+                updated = recolor_style(original, source, COLORS)
+                widget.setStyleSheet(updated)
+                widget._ronova_theme_style = (original, source, updated)
+            if isinstance(widget, MessageText):
+                widget.refresh_theme()
+            widget.update()
+        for widget in widgets:
+            if isinstance(widget, WorkspacePane):
+                widget.refresh_workspace_theme()
+            elif isinstance(widget, TurnView):
+                widget.refresh_bubble_theme()
+        surface = self.overlay.surface
+        surface.setStyleSheet(phone_css() + (COMPACT_CHAT_CSS if surface.compact_chat else ''))
+        if self.desktop:
+            self.settings_pane.setStyleSheet(phone_css())
+        self._scene_cache_signature = None
+        self._scene_variants.clear()
+        self.update()
 
     def open_companion(self):
         if self.controller.closing or self.capture_session is not None: return
@@ -219,6 +255,7 @@ class ClientWindow(QWidget):
         if self.workspace_window is None:
             from client_workspace import WorkspacePane
             from client_workspace_voice import WorkspaceVoice
+            from client_workspace_window import WorkspaceWindow
             icon = self.asset_root/'design/desktop-assistant-icons/screenshot.svg'
             avatar = QPixmap(str(self.asset_root/'design/character-final/avatar-ronova-chibi-working.png'))
             if avatar.isNull(): avatar = self.assets.avatar
@@ -226,16 +263,23 @@ class ClientWindow(QWidget):
                 self.workspace_voice = WorkspaceVoice(self.controller)
             self.workspace = WorkspacePane(avatar,icon,self.start_screenshot,self.codex,
                                            lambda:self.settings(page='models'),self.workspace_voice)
-            self.workspace_window = FloatingPanel('若娜瓦加班区', self.workspace, (920,700),
-                                                  self.close_assistant_panel, resizable=True,
-                                                  inner_corner_radius=self.workspace.INNER_CORNER_RADIUS)
+            self.workspace.task_completed.connect(self.launcher.show_task_completed)
+            self.workspace_window = WorkspaceWindow(self.workspace,self.close_assistant_panel)
         return self.workspace
+
+    def toggle_workspace(self):
+        if self.workspace_window is not None and self.workspace_window.collapsed:
+            self.open_workspace()
+        else:
+            self.panels.toggle('workspace',self.open_workspace)
 
     def open_workspace(self):
         if self.controller.closing or self.capture_session is not None: return
         self.ensure_workspace()
         self.codex.start()
         window = self.workspace_window
+        if window.collapsed:
+            window.set_collapsed(False)
         window.place_near(self.launcher.mapToGlobal(self.launcher.center))
         self.panels.open('workspace', window, self.hide_workspace, lambda: show_window(window))
 
@@ -469,64 +513,18 @@ class ClientWindow(QWidget):
         if state['busy'] or state['oath_active'] or not state.get('voice_ready',True): return
         if video:
             if state['incoming'] or self.video_call: return
-            if self.video_renderer is not None and self.video_renderer.process.poll() is not None:
-                self.video_renderer.shutdown()
-                self.video_renderer = None
-            self.video_preparing = True
-            self.video_due = 0.
+            self.video_call = True
         self.open_call()
-        if not video and not state['incoming'] and not state['call_requested']:
+        if not state['incoming'] and not state['call_requested']:
             try:
                 self.voice_start = self.controller.start_call(answer_incoming=False)
             except Exception as exc:
+                if video:
+                    self.text()
                 self.show_error(exc)
 
-    @property
-    def video_call(self):
-        return self.video_preparing or self.video_frame is not None
-
     def stop_video(self):
-        if self.video_call and self.video_renderer is not None: self.video_renderer.stop()
-        self.video_frame = None
-        self.video_preparing = False
-
-    def shutdown_video(self):
-        self.stop_video()
-        if self.video_renderer is None: return True
-        if not self.video_renderer.shutdown(): return False
-        self.video_renderer = None
-        return True
-
-    def render_video(self, now):
-        if now < self.video_due: return
-        self.video_due = max(now, self.video_due + 1/30)
-        try:
-            if self.video_renderer is None:
-                from client_live2d import VideoRenderer
-                self.video_renderer = VideoRenderer(self.asset_root)
-            scale = min(self.scale * self.devicePixelRatioF(), 1440/PHONE_SCREEN[3])
-            result = self.video_renderer.step(max(1, round(PHONE_SCREEN[2]*scale)),
-                                              max(1, round(PHONE_SCREEN[3]*scale)), self.speaking_motion.amount)
-            if result is None: return
-            frame, error = result
-            if error: raise RuntimeError(error)
-            self.video_frame = frame
-            if self.video_preparing:
-                self.video_preparing = False
-                state = self.controller.snapshot()
-                if state['incoming']:
-                    self.stop_video()
-                    self.update()
-                    return
-                if not state['call_requested']:
-                    self.voice_start = self.controller.start_call(answer_incoming=False)
-            self.update_scene_rect(PHONE_SCREEN)
-        except Exception as exc:
-            if self.voice_start is not None or self.controller.snapshot()['call_requested']:
-                self.safe(self.controller.end_call)
-            self.text()
-            message = str(exc) if isinstance(exc, RuntimeError) else '若娜瓦画面无法加载，请重新发起视频通话'
-            self.show_reply_alert(message,'视频通话失败')
+        self.video_call = False
 
     def settings(self, *, page=None):
         if self.desktop:
@@ -597,7 +595,7 @@ class ClientWindow(QWidget):
         editing = editor.isVisible() and (editor.composing or not editor.document().isEmpty())
         events = self.controller.poll(interaction_busy=editing or self.capture_session is not None)
         if self.controller.closed:
-            if not self.shutdown_video(): return
+            self.stop_video()
             self.timer.stop(); self.motion_timer.stop(); self.close()
             if self._quitting: QApplication.instance().quit()
             return
@@ -706,9 +704,6 @@ class ClientWindow(QWidget):
             self.update()
         previous=self.speaking_motion.amount
         self.speaking_motion.tick(self.state['playing'],self.state['playback_level'])
-        if self.video_call and self.overlay.phase=='hidden':
-            self.render_video(time.monotonic())
-            return
         if abs(previous-self.speaking_motion.amount)>.0001:
             self.update_scene_rect((844,168,252,252))
             if self.overlay.isVisible() and self.overlay.page=='text':
@@ -781,7 +776,7 @@ class ClientWindow(QWidget):
         painter.translate(self.offset_x,self.offset_y); painter.scale(self.scale,self.scale)
         video = self.video_call and self.screen=='call'
         if self.screen=='call':
-            if video: self.assets.paint_video(painter,self.video_frame)
+            if video: self.assets.paint_video(painter)
             self.assets.paint_dynamic(painter,self.speaking_motion,{'voice':self.voice_button.feedback,
                 'end':self.end_button.feedback,'text':self.text_button.feedback},muted=self.state['muted'],
                 incoming=bool(self.state['incoming']),
@@ -804,7 +799,6 @@ class ClientWindow(QWidget):
         state=self.state
         calibrating=bool(state['active'] and '测量背景音' in state['message'])
         if self.controller.closing: status='正在退出'
-        elif self.video_preparing: status='正在载入视频'
         elif video and not state['call_requested']: status='正在接通'
         elif state.get('voice_prepare_error'): status='语音加载失败'
         elif state.get('voice_preparing'): status='正在准备语音'
@@ -836,7 +830,8 @@ class ClientWindow(QWidget):
 
     def closeEvent(self,event):
         if self.controller.closed:
-            event.accept() if self.shutdown_video() else event.ignore()
+            self.stop_video()
+            event.accept()
             return
         if self.desktop and not self._quitting:
             event.ignore()
@@ -850,7 +845,7 @@ class ClientWindow(QWidget):
         if self.workspace is not None: self.workspace.cancel_request(all_chats=True)
         if self.workspace_voice is not None: self.workspace_voice.close()
         if self.codex is not None: self.codex.close()
-        self.shutdown_video()
+        self.stop_video()
         self.overlay.cancel_subpages(); self.overlay.transition.cancel(); self.overlay.hide()
         if self.desktop:
             self.panels.stop()
@@ -869,6 +864,9 @@ def main():
     args=parser.parse_args()
     os.chdir(ROOT)
     app=QApplication(sys.argv[:1]); app.setApplicationName('Ronova')
+    icon = ROOT/'design/desktop-assistant-icons/Ronova.ico'
+    if icon.is_file():
+        app.setWindowIcon(QIcon(str(icon)))
     font_family=load_fonts()
     if args.check:
         assets=SceneAssets(ROOT)

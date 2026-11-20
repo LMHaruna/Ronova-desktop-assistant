@@ -59,6 +59,8 @@ class DesktopController:
         self._voice_prepare_failure = None
         self.turn_tickets = {}
         self.voice_response_event = None
+        self.memory_edit_cancel = None
+        self.memory_edit_client = None
         self.executor = ThreadPoolExecutor(max_workers=1,thread_name_prefix='desktop-actions')
         def player(*args, **kwargs):
             return PCMPlayer(*args, **kwargs,volume=self.playback_volume,
@@ -289,9 +291,9 @@ class DesktopController:
                     try:
                         if self.memory.capture(event['text']):
                             self.emit({'kind':'memory_changed'})
-                            self.status('已保存这条记忆，可在设置中修改或删除')
+                            self.status('已保存记忆，可在设置中查看和管理')
                     except Exception:
-                        self.status('记忆未保存，请在设置中检查或手动添加')
+                        self.status('记忆未保存，请稍后重试')
                 pending=self.turn_tickets.pop(event['id'],None)
                 if event['kind']=='completed' and pending and not self.closing and event.get('source')!='incoming':
                     epoch = pending.pop('response_epoch')
@@ -704,26 +706,70 @@ class DesktopController:
         return self.action(operation)
 
     def change_memory(self, operation, *, response_content=None):
-        def change():
-            self.incoming_calls.invalidate()
-            self.voice_response_event = None
-            self.incoming_calls.connection('ended')
+        return self.action(lambda:self._change_memory_now(operation,response_content=response_content))
+
+    def _change_memory_now(self, operation, *, response_content=None):
+        self.incoming_calls.invalidate()
+        self.voice_response_event = None
+        self.incoming_calls.connection('ended')
+        self.companion.cancel_pending()
+        self.call.stop()
+        self.pipeline.cancel(reason='memory_change')
+        self.call_requested = self.muted = False
+        self.partial = ''
+        result = operation()
+        # Old visible chat is retained but cannot resurrect an edited or
+        # deleted fact, even after restart or a switch of backend.
+        self.router.chat.clear()
+        self.pipeline.last_reply = None
+        self.emit({'kind':'memory_changed'})
+        self.status('记忆设置已保存')
+        if response_content and self.memory.profile()['enabled']:
+            self.incoming_calls.offer('memory',response_content,self.router.selected)
+        return result if result is not None else True
+
+    def request_memory_change(self, instruction, history=()):
+        if not isinstance(instruction,str) or not 1<=len(instruction.strip())<=2000:
+            raise ValueError('请输入 1–2000 字的记忆修改要求')
+        instruction=instruction.strip()
+        if (not isinstance(history,(list,tuple)) or len(history)>4 or any(
+                not isinstance(item,dict) or set(item)!={'user','assistant'} or
+                any(not isinstance(item[key],str) or len(item[key])>2000 for key in ('user','assistant'))
+                for item in history)):
+            raise ValueError('记忆修改对话格式无效')
+        history=[dict(item) for item in history]
+        def operation():
             self.companion.cancel_pending()
-            self.call.stop()
-            self.pipeline.cancel(reason='memory_change')
-            self.call_requested = self.muted = False
-            self.partial = ''
-            result = operation()
-            # Old visible chat is retained but cannot resurrect an edited or
-            # deleted fact, even after restart or a switch of backend.
-            self.router.chat.clear()
-            self.pipeline.last_reply = None
-            self.emit({'kind':'memory_changed'})
-            self.status('记忆设置已保存')
-            if response_content and self.memory.profile()['enabled']:
-                self.incoming_calls.offer('memory',response_content,self.router.selected)
-            return result if result is not None else True
-        return self.action(change)
+            snapshot=self.memory.snapshot()
+            expected=[(row['id'],row['updated']) for row in snapshot['memories']]
+            cancel=threading.Event()
+            analyzer=self.companion.factory(self.router.selected,self.models.config(self.router.selected))
+            with self.lock:
+                if self.closing:
+                    analyzer.close()
+                    raise RuntimeError('客户端正在退出')
+                self.memory_edit_cancel=cancel; self.memory_edit_client=analyzer
+            try:
+                result=analyzer.revise_memory(instruction,snapshot['memories'],cancel,history)
+                if cancel.is_set(): raise RuntimeError('记忆修改已取消')
+                if not result['changes']:
+                    return {'reply':result['reply'],'changed':False,'summary_ready':True}
+                self._change_memory_now(lambda:self.memory.apply_requested_edits(
+                    result['changes'],snapshot['memory_epoch'],expected,instruction))
+                current=self.memory.snapshot(); summary_ready=not current['memories']
+                if current['memories'] and not cancel.is_set():
+                    try:
+                        summary=analyzer.summarize(current['memories'],cancel)
+                        versions=[(row['id'],row['updated']) for row in current['memories']]
+                        summary_ready=self.memory.save_summary(summary,current['memory_epoch'],versions,explicit=True)
+                    except Exception:
+                        summary_ready=False
+                return {'reply':result['reply'],'changed':True,'summary_ready':summary_ready}
+            finally:
+                with self.lock:
+                    self.memory_edit_cancel=None; self.memory_edit_client=None
+                analyzer.close()
+        return self.action(operation)
 
     def save_memory(self, content, category='fact', memory_id=None, *, expected_updated=None):
         content = validate_memory(content,category)
@@ -872,7 +918,11 @@ class DesktopController:
         if self.closing: return self.close_future
         self.closing = True
         self.ringtone.close()  # Do not wait behind queued model/actions to silence exit.
-        with self.lock: self.oath_session=None
+        with self.lock:
+            self.oath_session=None
+            edit_cancel=self.memory_edit_cancel; edit_client=self.memory_edit_client
+            if edit_cancel: edit_cancel.set()
+        if edit_client: edit_client.cancel()
         def finish():
             try:
                 voices = {id(v):v for v in [self.router.voice,*self.local_voices.values()]}

@@ -2,10 +2,10 @@
 
 以下许可按各自组件适用。
 
-## MiSans
+## Intel PresentMon
 
-- 桌面整理的图标名称及语音试听报告使用小米 MiSans 字体，字体文件采用小米发布的原版。
-- [小米官方下载](https://hyperos.mi.com/font/download) · [随包许可协议原文](licenses/MiSans-LICENSE.pdf)。
+- 上游项目：[GameTechDev/PresentMon](https://github.com/GameTechDev/PresentMon)，使用官方 2.5.1 x64 控制台程序采集游戏帧率。
+- 许可和第三方声明：[PresentMon-LICENSE.txt](licenses/PresentMon-LICENSE.txt)、[PresentMon-THIRD_PARTY.txt](licenses/PresentMon-THIRD_PARTY.txt)。
 
 ## IndexTTS
 

@@ -7,13 +7,13 @@ import json
 from pathlib import Path
 import uuid
 
-from PySide6.QtCore import (QByteArray, QBuffer, QIODevice, QRectF, QSignalBlocker, QSize,
-                            QStandardPaths, Qt, QTimer, QUrl, Signal)
+from PySide6.QtCore import (QByteArray, QBuffer, QEasingCurve, QIODevice, QRectF, QSignalBlocker, QSize,
+                            QStandardPaths, Qt, QTimer, QUrl, Signal, QVariantAnimation)
 from PySide6.QtGui import QBrush, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPixmap, QShortcut, QTransform
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QInputDialog,
                                QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit,
-                               QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QStyle,
+                               QPushButton, QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QStyle,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from chat_client import ChatError, IMAGE_LIMIT
@@ -21,11 +21,13 @@ from client_fonts import code_font, emphasis_font
 from client_markup import MarkupEditor, marked_image
 from client_panels import ChatInput, SendButton
 from client_shell import CloseButton
-from client_theme import COLORS, themed
+from client_theme import COLORS, LIGHT_COLORS, themed
 from client_tool_library import discover_library
 from client_workspace_controls import (CodexQuota, ContextButton, LibrarySection, MenuButton, ModelPicker, PermissionPicker,
-                                       PicturePreview, ProjectSidebar, WorkspaceTree, mount_panel, tool_icon, usage_percent)
+                                       PicturePreview, ProjectSidebar, WorkspaceTree, mount_panel, sidebar_colors,
+                                       tinted_svg_icon, tool_icon, usage_percent)
 from client_workspace_history import WorkspaceHistory
+from client_workspace_preview import WorkspacePreview
 from client_workspace_voice import WorkspaceVoiceBusy
 
 
@@ -145,7 +147,7 @@ class ProjectDialog(QDialog):
                 border-radius:10px; padding:7px 9px; selection-background-color:$selection; selection-color:$text; }
             QPushButton { color:$text; background:$surface; border:1px solid $border; border-radius:10px; }
             QPushButton:hover, QPushButton:focus { border-color:$gray; }
-            QPushButton#projectDialogAction { color:$surface; background:$primary; border-color:$primary; }
+            QPushButton#projectDialogAction { color:white; background:$primary; border-color:$primary; }
             QPushButton#projectDialogAction:hover, QPushButton#projectDialogAction:focus {
                 background:$primaryHover; border-color:$primaryHover; }
         '''))
@@ -189,7 +191,7 @@ class WorkspaceBackdrop(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        painter.setOpacity(.16)
+        painter.setOpacity(.06)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(artwork)
         painter.drawEllipse(target)
@@ -197,6 +199,7 @@ class WorkspaceBackdrop(QWidget):
 
 class WorkspacePane(QWidget):
     INNER_CORNER_RADIUS = 20
+    task_completed = Signal(str)
 
     def __init__(self, avatar, screenshot_icon, capture, codex, open_codex_settings, voice=None):
         super().__init__()
@@ -212,12 +215,16 @@ class WorkspacePane(QWidget):
         self.deleting_project = None
         self.chats = {}
         self.active_chat = None
+        self.docked = False
+        self.question_prompted = set()
+        self.open_question = None
         self.editing_picture = None
         self.catalog = {}
         self.catalog_state = ''
-        icons = Path(screenshot_icon).parent
+        self.screenshot_icon_path = Path(screenshot_icon)
+        icons = self.icon_dir = self.screenshot_icon_path.parent
         self.folder_icon = QIcon(str(icons/'folder.svg'))
-        self.more_icon = tool_icon('<path d="M5 12h.01m6.99 0h.01m6.99 0h.01" stroke-width="2.7"/>',COLORS['muted'])
+        self.more_icon = tool_icon('<path d="M5 12h.01m6.99 0h.01m6.99 0h.01" stroke-width="2.7"/>',LIGHT_COLORS['muted'])
         self.rename_icon = tool_icon('<path d="m4 15 11-11 5 5L9 20H4v-5zm9-9 5 5"/>',COLORS['muted'])
         self.delete_icon = tool_icon('<path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>',COLORS['primary'])
         self.approval_icons = {
@@ -227,6 +234,7 @@ class WorkspacePane(QWidget):
         }
         mic_glyph = ('<path d="M12 3.5a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-5 0V6A2.5 2.5 0 0 1 12 3.5z"/>'
                      '<path d="M6.5 11.5a5.5 5.5 0 0 0 11 0"/><path d="M12 17v3.5m-2.9 0h5.8"/>')
+        self.mic_glyph = mic_glyph
         self.mic_icon = tool_icon(mic_glyph,COLORS['muted'])
         self.mic_icon_active = tool_icon(mic_glyph,COLORS['text'])
         speaker_glyph = ('<path d="M4.5 9.5h3l4-3.6v12.2l-4-3.6h-3z"/>'
@@ -244,17 +252,17 @@ class WorkspacePane(QWidget):
             QFrame#workLibrary { background:$surface; border:1px solid $border; border-radius:12px; }
             QPushButton#workLibraryHeader { background:transparent; text-align:left; padding:5px 9px; }
             QPushButton#workLibraryHeader:hover { background:$selection; }
-            QListWidget#workLibraryItems { background:transparent; border:0; outline:0; font-size:13px; }
-            QListWidget#workLibraryItems::item { height:25px; padding-left:5px; }
-            QTreeWidget { background:transparent; border:0; outline:0; }
-            QTreeWidget::item { height:30px; padding:0 5px; }
+            QListWidget#workLibraryItems { background:transparent; color:$text; border:0; outline:0; font-size:13px; }
+            QListWidget#workLibraryItems::item { min-height:25px; padding-left:5px; }
+            QTreeWidget { background:transparent; color:$text; border:0; outline:0; }
+            QTreeWidget::item { color:$text; min-height:30px; padding:2px 5px; }
             QTreeWidget::item:selected { background:transparent; color:$text; }
             QLabel#workSection { color:$muted; font-size:12px; }
             QLabel#workChatTitle { font-size:16px; }
             QLabel#workHint { color:$muted; font-size:12px; }
             QFrame#workCodexCard { background:$background; border:1px solid $border; border-radius:12px; }
             QFrame#workAlert { background:$alertBackground; border:1px solid $alertBorder; border-radius:12px; }
-            QFrame#workAlert QLabel { color:$error; }
+            QFrame#workAlert QLabel { color:$text; }
             QScrollArea#workHistory, QWidget#workHistoryBody, QTextBrowser#workMessageText {
                 background:transparent; border:0; }
             QFrame#workUserBubble { background:$elevated; border-radius:16px; }
@@ -263,6 +271,10 @@ class WorkspacePane(QWidget):
             QToolButton:hover { background:$selection; }
             QToolButton:disabled { color:$disabled; }
             QToolButton::menu-indicator { width:0; }
+            QFrame#workDockContext { background:$background; border:1px solid $border; border-radius:10px; }
+            QFrame#workDockContext QToolButton { padding:5px 7px; text-align:left; }
+            QFrame#workDockContext QToolButton:hover, QFrame#workDockContext QToolButton:focus {
+                background:$selection; }
             QToolButton#workAddAction::menu-indicator { image:none; width:0; }
             QMenu#workControlMenu, QMenu#workModelMenu { background:$surface; border:1px solid $border; }
             QMenu#workControlMenu { padding:0; }
@@ -281,7 +293,7 @@ class WorkspacePane(QWidget):
             QToolButton#workModelChoice { background:transparent; border:0; padding:2px 8px; }
             QToolButton#workModelChoice:hover, QToolButton#workModelChoice:focus {
                 background:$elevated; border-radius:7px; }
-            QListWidget#workModelList { background:transparent; border:0; outline:0; }
+            QListWidget#workModelList { background:transparent; color:$text; border:0; outline:0; }
             QListWidget#workModelList::item { padding:0 9px; border-radius:8px; }
             QListWidget#workModelList::item:hover, QListWidget#workModelList::item:selected {
                 background:$selection; color:$text; }
@@ -319,6 +331,8 @@ class WorkspacePane(QWidget):
             QPushButton#workRemoveImage:hover { background:$primary; }
             QPushButton#workStop { background:$primary; border-radius:17px; padding:0; }
             QWidget#workQuota { border-top:1px solid $border; }
+            QFrame#workPreview { background:$surface; border:1px solid $border; border-radius:12px; }
+            QSplitter#workSplit::handle { background:$border; border-radius:2px; }
             QLabel#workQuotaTitle { color:$muted; font-size:12px; }
             QLabel#workQuotaValue { color:$text; font-size:12px; }
             QProgressBar#workQuotaBar { background:$border; border:0; border-radius:3px; }
@@ -329,12 +343,41 @@ class WorkspacePane(QWidget):
         outer.setSpacing(18)
         self.sidebar = self.build_sidebar()
         outer.addWidget(self.sidebar)
+        self.split = QSplitter(Qt.Orientation.Vertical)
+        self.split.setObjectName('workSplit')
+        self.split.setChildrenCollapsible(False)
+        outer.addWidget(self.split,1)
         self.pages = QStackedWidget()
-        outer.addWidget(self.pages,1)
+        self.split.addWidget(self.pages)
+        self.preview = WorkspacePreview()
+        self.split.addWidget(self.preview)
+        self.preview.edit_requested.connect(self.edit_preview)
+        self.preview_split_ratio = .5
+        self.preview_motion = QVariantAnimation(self,startValue=0.,endValue=1.,duration=250)
+        self.preview_motion.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.preview_motion.valueChanged.connect(self.resize_preview)
+        self.split.splitterMoved.connect(self.remember_preview_split)
+        self.split.setStretchFactor(0,1)
+        self.split.setStretchFactor(1,1)
+        self.preview.hide()
         self.chat = QWidget(); self.chat.setObjectName('workChat'); self.pages.addWidget(self.chat)
         self.editor = MarkupEditor(); self.pages.addWidget(self.editor)
         self.editor.accepted.connect(self.save_marks); self.editor.cancelled.connect(self.close_editor)
         body = QVBoxLayout(self.chat); body.setContentsMargins(0,0,0,0); body.setSpacing(8)
+
+        self.dock_context = QFrame()
+        self.dock_context.setObjectName('workDockContext')
+        context = QVBoxLayout(self.dock_context)
+        context.setContentsMargins(4,3,4,3)
+        context.setSpacing(1)
+        self.project_picker = MenuButton('workProjectPicker','切换项目',self.docked_project_menu)
+        self.chat_picker = MenuButton('workChatPicker','切换对话',self.docked_chat_menu)
+        for picker in (self.project_picker,self.chat_picker):
+            picker.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            picker.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+            context.addWidget(picker)
+        body.addWidget(self.dock_context)
+        self.dock_context.hide()
 
         self.chat_title = QLabel()
         self.chat_title.setObjectName('workChatTitle')
@@ -373,6 +416,7 @@ class WorkspacePane(QWidget):
         conversation.setContentsMargins(0,0,0,0)
         self.history = WorkspaceHistory(self.add_picture, reply_icons if voice is not None else None)
         self.history.play_requested.connect(self.play_reply)
+        self.history.preview_requested.connect(self.open_reply_preview)
         conversation.addWidget(self.history)
         body.addWidget(backdrop,1)
 
@@ -402,8 +446,9 @@ class WorkspacePane(QWidget):
         approval_layout.addLayout(actions)
         body.addWidget(self.approval_card)
 
-        composer = QFrame()
+        composer = self.composer = QFrame()
         composer.setObjectName('workComposer')
+        composer._ronova_fixed_theme = True
         compose = QVBoxLayout(composer)
         compose.setContentsMargins(13,10,11,9)
         compose.setSpacing(5)
@@ -428,7 +473,8 @@ class WorkspacePane(QWidget):
         self.input.pasted_image.connect(self.attach_image); self.input.textChanged.connect(self.refresh_controls)
         compose.addWidget(self.input)
 
-        controls = QHBoxLayout(); compose.addLayout(controls)
+        controls = self.composer_controls = QHBoxLayout(); compose.addLayout(controls)
+        self.floating_control_spacing = controls.spacing()
         self.add_action = MenuButton('workAddAction', '更多操作', self.composer_menu)
         self.add_action.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         plus = '<path d="M12 5v14M5 12h14"/>'
@@ -437,7 +483,7 @@ class WorkspacePane(QWidget):
         self.plan_icon = tool_icon('<rect x="5" y="4" width="14" height="16" rx="2"/>'
                                    '<path d="m8 9 1 1 2-2m2 2h3m-8 5h8"/>')
         controls.addWidget(self.add_action)
-        take = QPushButton(QIcon(str(screenshot_icon)), '')
+        take = self.capture_button = QPushButton(QIcon(str(screenshot_icon)), '')
         take.setObjectName('workCapture')
         for control in (self.add_action, take):
             control.setIconSize(QSize(22,22))
@@ -450,6 +496,7 @@ class WorkspacePane(QWidget):
         self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.context_button = ContextButton(self.context_menu)
         self.model_button = MenuButton('workModel','Codex 模型与推理强度',self.model_menu)
+        self.model_button.menu().aboutToShow.connect(lambda: self.load_catalog(refresh=True))
         self.model_button.setFont(emphasis_font())
         controls.addWidget(self.context_button)
         controls.addWidget(self.model_button)
@@ -463,7 +510,7 @@ class WorkspacePane(QWidget):
         controls.addWidget(self.mic)
         self.send = SendButton(self.submit, arrow=True)
         stop_icon = tool_icon(f'<rect x="6" y="6" width="12" height="12" rx="1.6" '
-                              f'fill="{COLORS["surface"]}" stroke="none"/>')
+                              'fill="white" stroke="none"/>')
         self.stop = QPushButton(stop_icon, '')
         self.stop.setObjectName('workStop')
         self.stop.setAccessibleName('停止回答')
@@ -472,6 +519,12 @@ class WorkspacePane(QWidget):
         self.stop.setFixedSize(34,34)
         self.stop.clicked.connect(lambda: self.cancel_request())
         controls.addWidget(self.send); controls.addWidget(self.stop)
+        self.compact_controls = QHBoxLayout()
+        self.compact_controls.setSpacing(2)
+        self.compact_controls.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        compose.addLayout(self.compact_controls)
+        self.compact_buttons = (self.permission_button,self.context_button,self.model_button)
+        self.has_compact_row = False
 
         if self.voice is not None:
             self.voice.transcript_ready.connect(self.receive_transcript)
@@ -498,9 +551,182 @@ class WorkspacePane(QWidget):
         codex.account_changed.connect(self.codex_account_changed)
         codex.event.connect(self.codex_event)
         codex.approval.connect(self.codex_approval)
+        self.refresh_workspace_theme()
         if codex.connected:
             self.load_codex_threads()
             self.codex_account_changed()
+
+    def set_docked(self, docked):
+        self.docked = docked
+        self.sidebar.setVisible(not docked)
+        self.dock_context.setVisible(docked)
+        self.refresh_project_picker()
+        style = Qt.ToolButtonStyle.ToolButtonIconOnly if docked else Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        for button in (self.permission_button,self.model_button):
+            button.setToolButtonStyle(style)
+            button.setIconSize(QSize(15,15))
+            if docked:
+                button.setFixedWidth(28)
+            else:
+                button.setMinimumWidth(0)
+                button.setMaximumWidth(16777215)
+        self.model_button.setIcon(self.dock_model_icon() if docked else QIcon())
+        self.composer_controls.setSpacing(2 if docked else self.floating_control_spacing)
+        self.input.setFixedHeight(49 if docked else 61)
+        if not docked:
+            self.arrange_docked_controls(False)
+        self.sync_library_refresh()
+
+    def arrange_docked_controls(self, narrow):
+        if narrow == self.has_compact_row:
+            return
+        self.has_compact_row = narrow
+        for button, position in zip(self.compact_buttons,(2,4,5)):
+            if narrow:
+                self.compact_controls.addWidget(button)
+            else:
+                self.composer_controls.insertWidget(position,button)
+
+    @staticmethod
+    def dock_model_icon():
+        return tool_icon('<rect x="5" y="5" width="14" height="14" rx="3"/>'
+                         '<path d="M9 9h6v6H9zm0-7v3m6-3v3m-6 14v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3"/>',COLORS['muted'])
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.docked:
+            self.refresh_project_picker()
+
+    def refresh_project_picker(self):
+        self.chat_title.setVisible(not self.docked)
+        if not self.docked:
+            return
+        project = self.current_project()
+        chat = self.active_chat
+        selected = project is not None and self.project_path(project) is not None
+        self.chat_picker.setVisible(selected)
+        rows = ((self.project_picker,'项目',project.text(0) if selected else '未选项目'),
+                (self.chat_picker,'对话',chat.item.toolTip(0) if chat is not None else '选择或新建聊天'))
+        for picker, label, name in rows:
+            title = f'{label} · {name}'
+            metrics = picker.fontMetrics()
+            arrow = '  ▾'
+            available = max(0,self.width()-26-metrics.horizontalAdvance(arrow))
+            picker.setText(metrics.elidedText(title,Qt.TextElideMode.ElideRight,available).replace('&','&&') + arrow)
+            picker.setToolTip(title)
+
+    def docked_project_menu(self, menu):
+        current = self.current_project()
+        for project in self.projects.values():
+            action = menu.addAction(self.folder_icon,project.text(0).replace('&','&&'))
+            action.setCheckable(True)
+            action.setChecked(project is current)
+            action.triggered.connect(lambda checked, item=project: self.tree.setCurrentItem(item))
+        if self.projects:
+            menu.addSeparator()
+        menu.addAction('添加项目文件夹…',self.choose_folder)
+        if current is not None:
+            self.project_menu(menu.addMenu('管理当前项目'),current)
+
+    def docked_chat_menu(self, menu):
+        project = self.current_project()
+        if project is not None:
+            for chat in self.project_chats(project):
+                action = menu.addAction(chat.item.text(0).replace('&','&&'))
+                action.setCheckable(True)
+                action.setChecked(chat is self.active_chat)
+                action.triggered.connect(lambda checked, item=chat.item: self.tree.setCurrentItem(item))
+        if menu.actions():
+            menu.addSeparator()
+        menu.addAction('新建聊天',lambda: self.new_chat(project))
+        if self.active_chat is not None:
+            self.chat_menu(menu.addMenu('管理当前聊天'),self.active_chat)
+
+    def refresh_preview(self):
+        chat = self.active_chat
+        self.preview.set_chat(chat,self.chat_cwd(chat) if chat else self.codex.default_cwd)
+        self.update_preview_visibility()
+
+    def open_reply_preview(self, turn, url):
+        chat = self.active_chat
+        if chat is not None and turn in chat.turns and self.preview.open_link(url,self.chat_cwd(chat)):
+            self.update_preview_visibility()
+
+    def update_preview_visibility(self):
+        visible = not self.preview.image.isNull() and self.pages.currentWidget() is self.chat
+        if visible and self.preview.isHidden():
+            self.preview.show()
+            self.resize_preview(0.)
+            if self.isVisible():
+                self.preview_motion.start()
+            else:
+                self.resize_preview(1.)
+        elif not visible:
+            self.preview_motion.stop()
+            self.preview.hide()
+
+    def resize_preview(self, progress):
+        if self.preview.isHidden():
+            return
+        height = max(0,self.split.height()-self.split.handleWidth())
+        lower = round(height*(1.-self.preview_split_ratio)*progress)
+        bar = self.history.verticalScrollBar()
+        at_bottom = bar.value() >= bar.maximum()-6
+        self.split.setSizes([height-lower,lower])
+        if at_bottom:
+            bar.setValue(bar.maximum())
+
+    def remember_preview_split(self):
+        self.preview_motion.stop()
+        upper,lower = self.split.sizes()
+        if lower and upper:
+            self.preview_split_ratio = upper/(upper+lower)
+
+    def refresh_workspace_theme(self):
+        dark = COLORS['surface'] != LIGHT_COLORS['surface']
+        self.sidebar.refresh_sidebar_theme()
+        for section in self.library_sections:
+            section.refresh_sidebar_theme()
+        sidebar_color = sidebar_colors()['muted']
+        plus = tool_icon('<path d="M12 5v14M5 12h14"/>', sidebar_color)
+        self.sidebar.findChild(QPushButton, 'workNewChat').setIcon(plus)
+        self.sidebar.findChild(QPushButton, 'workAddProject').setIcon(plus)
+        self.more_icon = tool_icon('<path d="M5 12h.01m6.99 0h.01m6.99 0h.01" stroke-width="2.7"/>', sidebar_color)
+        for control in self.tree.findChildren(MenuButton, 'workChatMenu'):
+            control.setIcon(self.more_icon)
+        replacements = {'#665E61': sidebar_color} if dark else {}
+        self.folder_icon = tinted_svg_icon(self.icon_dir/'folder.svg', replacements)
+        for project in self.projects.values():
+            project.setIcon(0, self.folder_icon)
+        if dark:
+            self.composer.setStyleSheet('''
+                QFrame#workComposer {
+                    background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #302D2E,stop:0.45 #292627,stop:1 #262324);
+                    border:1px solid #514A4D; border-radius:20px;
+                }
+                QPlainTextEdit#workInput { color:#F6F2F3; placeholder-text-color:#E5DDDE; }
+                QLabel#workHint { color:#E5DDDE; }
+            ''')
+            foreground = '#E5DDDE'
+            capture_replacements = {'#382d39': foreground, '#8B1015': '#F0B5B7'}
+        else:
+            self.composer.setStyleSheet('')
+            foreground = LIGHT_COLORS['muted']
+            capture_replacements = {}
+        self.capture_button.setIcon(tinted_svg_icon(self.screenshot_icon_path, capture_replacements))
+        self.composer_icons = (tool_icon('<path d="M12 5v14M5 12h14"/>', foreground),
+                               tool_icon('<path d="M12 5v14M5 12h14"/>', '#F0B5B7' if dark else COLORS['primary']))
+        self.add_action.setIcon(self.composer_icons[bool(self.add_action.property('planMode'))])
+        self.mic_icon = tool_icon(self.mic_glyph, foreground)
+        self.mic_icon_active = tool_icon(self.mic_glyph, COLORS['text'])
+        self.mic.setIcon(self.mic_icon_active if self.mic.isChecked() else self.mic_icon)
+        for mode, filename in (('manual','approval-request.svg'),('review','permissions.svg'),('read','approval-read.svg')):
+            self.approval_icons[mode] = tinted_svg_icon(self.icon_dir/filename, {'#665E61': foreground} if dark else {})
+        mode = self.active_chat.permission if self.active_chat else 'manual'
+        self.permission_button.setIcon(self.approval_icons[mode])
+        if self.docked:
+            self.model_button.setIcon(self.dock_model_icon())
+        self.tree.viewport().update()
 
     def build_sidebar(self):
         sidebar = ProjectSidebar()
@@ -519,7 +745,7 @@ class WorkspacePane(QWidget):
         )
         for section in self.library_sections:
             column.addWidget(section)
-        plus = tool_icon('<path d="M12 5v14M5 12h14"/>',COLORS['muted'])
+        plus = tool_icon('<path d="M12 5v14M5 12h14"/>',LIGHT_COLORS['muted'])
         new = QPushButton(plus,'新聊天')
         new.setIconSize(QSize(20,20))
         new.setObjectName('workNewChat')
@@ -571,6 +797,9 @@ class WorkspacePane(QWidget):
         self.sync_library_refresh()
 
     def hideEvent(self, event):
+        if self.preview_motion.state() == QVariantAnimation.State.Running:
+            self.preview_motion.stop()
+            self.resize_preview(1.)
         self.library_timer.stop()
         self.stop_voice()
         super().hideEvent(event)
@@ -728,6 +957,7 @@ class WorkspacePane(QWidget):
             self.tree.setItemWidget(item,1,more)
             project.setExpanded(True)
             self.tree.setCurrentItem(item)
+        self.refresh_project_picker()
 
     def add_chat(self, project, title='新聊天', thread_id=None):
         item = QTreeWidgetItem([self.short_title(title)])
@@ -761,6 +991,7 @@ class WorkspacePane(QWidget):
                 return
         chat = self.chats.get(item.data(0,Qt.ItemDataRole.UserRole)) if item is not None else None
         if self.active_chat is chat:
+            self.refresh_project_picker()
             return
         if self.active_chat is not None:
             self.active_chat.draft = self.input.toPlainText()
@@ -772,10 +1003,12 @@ class WorkspacePane(QWidget):
         self.input.setPlainText(chat.draft if chat else '')
         self.chat_title.setText(item.text(0) if chat else '选择或新建聊天')
         self.chat_title.setToolTip(item.toolTip(0) if chat else '')
+        self.refresh_project_picker()
         self.render_attachments()
         self.refresh_controls()
         self.refresh_alert()
         self.render_history(force_bottom=True)
+        self.refresh_preview()
         self.load_codex_history(chat)
 
     def chat_busy(self, chat):
@@ -789,6 +1022,7 @@ class WorkspacePane(QWidget):
         if chat is self.active_chat:
             self.chat_title.setText(label)
             self.chat_title.setToolTip(title)
+            self.refresh_project_picker()
 
     def rename_chat(self, chat):
         if self.chat_busy(chat) or chat.server_deleted:
@@ -875,6 +1109,7 @@ class WorkspacePane(QWidget):
             return
         self.project_names[self.project_path(project)] = name
         project.setText(0,name)
+        self.refresh_project_picker()
         self.save_project_preferences()
 
     def deletion_in_progress(self):
@@ -956,6 +1191,7 @@ class WorkspacePane(QWidget):
             self.unassigned_hidden = True
         if alias is not None or path is None:
             self.save_project_preferences()
+        self.refresh_project_picker()
         self.refresh_controls()
 
     def confirm_deletion(self, title, question, detail):
@@ -1108,38 +1344,40 @@ class WorkspacePane(QWidget):
         self.refresh_controls()
         self.load_catalog()
 
-    def load_catalog(self, cursor=None):
+    def load_catalog(self, cursor=None, *, refresh=False, models=None):
         if not self.codex.connected or not self.codex.signed_in:
             return
         if cursor is None:
-            if self.catalog_state in ('loading','ready'):
+            if self.catalog_state == 'loading' or (self.catalog_state == 'ready' and not refresh):
                 return
             self.catalog_state = 'loading'
-            self.catalog.clear()
+            models = {}
         params = {'limit':40,'includeHidden':False}
         if cursor:
             params['cursor'] = cursor
-        self.codex.call('model/list',params,lambda result,error: self.catalog_loaded(result,error,cursor))
+        self.codex.call('model/list',params,lambda result,error: self.catalog_loaded(result,error,cursor,models))
 
-    def catalog_loaded(self, result, error, cursor):
+    def catalog_loaded(self, result, error, cursor, models):
+        changed = False
         if error:
-            self.catalog.clear()
             self.catalog_state = 'error'
         else:
             for model in result.get('data',[]):
                 if model.get('model') and not model.get('hidden'):
-                    self.catalog[model['model']] = model
+                    models[model['model']] = model
             next_cursor = result.get('nextCursor')
             if next_cursor and next_cursor != cursor:
-                self.load_catalog(next_cursor)
+                self.load_catalog(next_cursor, models=models)
                 return
+            changed = self.catalog != models
+            self.catalog = models
             self.catalog_state = 'ready'
         self.refresh_controls()
         menu = self.model_button.menu()
         if menu.isVisible() and menu.actions():
-            if error:
+            if error and not self.catalog:
                 menu.actions()[0].setText('无法读取可用模型，请重新打开菜单')
-            else:
+            elif changed or not self.catalog:
                 menu.clear()
                 self.model_menu(menu)
 
@@ -1165,7 +1403,7 @@ class WorkspacePane(QWidget):
         chat = self.active_chat
         if chat is None:
             return
-        if self.catalog_state == 'loading' or not self.catalog:
+        if not self.catalog:
             self.load_catalog()
             message = '请先登录 ChatGPT' if not self.codex.signed_in else '正在读取可用模型…'
             if self.catalog_state == 'ready':
@@ -1357,7 +1595,7 @@ class WorkspacePane(QWidget):
         elif chat and chat.renaming:
             status = '正在重命名…'
         if active:
-            status = '正在停止…' if stopping else ('正在制定计划…' if request.plan_mode else '正在回答…')
+            status = '正在停止…' if stopping else ('正在制定计划…' if request.plan_mode else '')
         elif planning and not status:
             status = '计划模式'
         if self.voice_note:
@@ -1373,13 +1611,14 @@ class WorkspacePane(QWidget):
         self.permission_button.setEnabled(chat is not None and not busy)
         mode = chat.permission if chat else 'manual'
         self.permission_button.setText(PERMISSIONS[mode][0] + ' ▼')
+        self.permission_button.setToolTip(PERMISSIONS[mode][0])
         self.permission_button.setIcon(self.approval_icons[mode])
         self.model_button.setEnabled(chat is not None and not busy)
         model = self.catalog_model(chat) if chat else {}
         name = model.get('displayName') or (chat.model if chat else None) or 'Codex'
         effort = (chat.effort if chat else None) or model.get('defaultReasoningEffort')
         label = f'{name} · {EFFORT_NAMES.get(effort,effort)}' if effort else name
-        self.model_button.setText(self.short_title(label) + ' ▼')
+        self.model_button.setText(self.short_title(label) + ' ⌄')
         self.model_button.setToolTip(label)
         usage = chat.usage if chat else None
         self.context_button.show_usage(usage)
@@ -1467,7 +1706,7 @@ class WorkspacePane(QWidget):
                 shortcut = QShortcut(QKeySequence(key), preview)
                 shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
                 shortcut.activated.connect(lambda selected=picture: self.open_editor(selected))
-            remove = CloseButton(preview, color=COLORS['surface'])
+            remove = CloseButton(preview, color='#FFFFFF')
             remove.setObjectName('workRemoveImage')
             remove.setAccessibleName('移除待发送图片')
             remove.setToolTip('移除图片')
@@ -1484,10 +1723,23 @@ class WorkspacePane(QWidget):
 
     def open_editor(self, picture):
         if picture not in self.pictures: return
+        self.start_editor(picture)
+
+    def edit_preview(self):
+        chat = self.active_chat
+        if (chat is None or chat.deleting or chat.server_deleted
+                or chat.item.parent() is self.deleting_project or self.preview.image.isNull()):
+            return
+        image = self.preview.image.convertToFormat(QImage.Format.Format_ARGB32)
+        image.setDevicePixelRatio(1.)
+        self.start_editor(Picture(image),preview=True)
+
+    def start_editor(self, picture, *, preview=False):
         self.editing_picture = picture
         self.sidebar.setEnabled(False)
         self.pages.setCurrentWidget(self.editor)
-        self.editor.open(picture.source,picture.marks)
+        self.update_preview_visibility()
+        self.editor.open(picture.source,picture.marks,preview=preview)
 
     def close_editor(self):
         self.editing_picture = None
@@ -1495,10 +1747,14 @@ class WorkspacePane(QWidget):
             self.pages.setCurrentWidget(self.chat)
             self.editor.canvas.load(None,())
             self.sidebar.setEnabled(True)
+            self.update_preview_visibility()
 
     def save_marks(self, marks):
         picture = self.editing_picture
-        if picture is not None and marks!=picture.marks:
+        if picture is not None and picture not in self.pictures:
+            self.add_picture(Picture(picture.source,marks))
+            self.input.setFocus()
+        elif picture is not None and marks!=picture.marks:
             edited = Picture(picture.source,marks)
             self.set_pictures(tuple(edited if attached is picture else attached for attached in self.pictures))
         else:
@@ -1685,6 +1941,7 @@ class WorkspacePane(QWidget):
             self.refresh_alert()
             self.refresh_controls()
             self.render_history(force_bottom=True)
+            self.refresh_preview()
 
     def restore_picture(self, filename):
         path = Path(filename)
@@ -1923,6 +2180,7 @@ class WorkspacePane(QWidget):
         if method == 'serverRequest/resolved':
             request_id = params.get('requestId')
             run.approvals.pop(request_id,None)
+            self.question_prompted.discard(request_id)
             if run.question_dialog and run.question_dialog[0] == request_id:
                 run.question_dialog[1].reject()
             self.update_approval_badge(run)
@@ -1985,6 +2243,20 @@ class WorkspacePane(QWidget):
             return
         run.approvals[request_id] = (method,params)
         self.update_approval_badge(run)
+        if method == USER_INPUT_REQUEST:
+            QTimer.singleShot(0, self.show_next_question)
+
+    def show_next_question(self):
+        if self.open_question is not None:
+            return
+        for chat in self.chats.values():
+            run = chat.request
+            if run is None or run.stopping:
+                continue
+            for request_id, (method, params) in run.approvals.items():
+                if method == USER_INPUT_REQUEST and request_id not in self.question_prompted:
+                    self.show_codex_questions(run, request_id, params['questions'])
+                    return
 
     def update_approval_badge(self, run):
         icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning) if run.approvals else QIcon()
@@ -2038,20 +2310,28 @@ class WorkspacePane(QWidget):
         request_id = next(iter(run.approvals))
         method, params = run.approvals[request_id]
         if method == USER_INPUT_REQUEST:
-            answers = self.collect_codex_answers(run, request_id, params['questions']) if allow else {}
-            if answers is None or request_id not in run.approvals:
+            if allow:
+                self.show_codex_questions(run, request_id, params['questions'])
                 return
-            sent = self.codex.answer_questions(request_id, answers)
+            sent = self.codex.answer_questions(request_id, {})
         else:
             choices = params.get('availableDecisions') or ()
             rejection = 'cancel' if choices and 'decline' not in choices else 'decline'
             sent = self.codex.decide(request_id, 'accept' if allow else rejection)
         if sent:
             run.approvals.pop(request_id,None)
+            self.question_prompted.discard(request_id)
             self.update_approval_badge(run)
 
-    def collect_codex_answers(self, run, request_id, questions):
+    def show_codex_questions(self, run, request_id, questions):
+        if self.open_question is not None:
+            return
         dialog = ProjectDialog(self, '回答 Codex 的问题', '提交')
+        dialog.setStyleSheet(dialog.styleSheet() + themed('''
+            QFrame#projectDialogCard { background:$elevated; border:1px solid $border; border-radius:22px; }
+            QComboBox { color:$text; background:$surface; border:1px solid $gray;
+                        border-radius:10px; padding:7px 9px; }
+        '''))
         fields = []
         for question in questions:
             label = QLabel(question['question'])
@@ -2079,18 +2359,38 @@ class WorkspacePane(QWidget):
             field.setAccessibleName(question['question'])
             label.setBuddy(field)
             dialog.body.addWidget(field)
-            fields.append((question['id'], value))
+            fields.append((question['id'], value, field))
+        def validate():
+            dialog.confirm.setEnabled(all(value().strip() for _, value, _ in fields))
+        for _, _, field in fields:
+            if isinstance(field, QComboBox):
+                field.currentTextChanged.connect(validate)
+            else:
+                field.textChanged.connect(validate)
+        validate()
+        self.question_prompted.add(request_id)
+        self.open_question = dialog
         run.question_dialog = (request_id, dialog)
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        run.question_dialog = None
-        answers = {key:{'answers':[answer]} for key, value in fields if (answer := value().strip())}
-        dialog.deleteLater()
-        return answers if accepted else None
+        def finished(result):
+            if run.question_dialog and run.question_dialog[1] is dialog:
+                run.question_dialog = None
+            self.open_question = None
+            if result == QDialog.DialogCode.Accepted and request_id in run.approvals:
+                answers = {key:{'answers':[value().strip()]} for key, value, _ in fields}
+                if all(row['answers'][0] for row in answers.values()) and self.codex.answer_questions(request_id, answers):
+                    run.approvals.pop(request_id, None)
+                    self.question_prompted.discard(request_id)
+                    self.update_approval_badge(run)
+            dialog.deleteLater()
+            QTimer.singleShot(0, self.show_next_question)
+        dialog.finished.connect(finished)
+        dialog.open()
 
     def interrupt_codex(self, run):
         for request_id, (method, _) in tuple(run.approvals.items()):
             if method != USER_INPUT_REQUEST:
                 self.codex.decide(request_id,'cancel')
+            self.question_prompted.discard(request_id)
         if run.question_dialog:
             run.question_dialog[1].reject()
         run.approvals.clear()
@@ -2111,11 +2411,14 @@ class WorkspacePane(QWidget):
         if chat.request is not run:
             return
         chat.request = None
+        self.question_prompted.difference_update(run.approvals)
         run.approvals.clear()
         if run.question_dialog:
             run.question_dialog[1].reject()
         self.update_approval_badge(run)
         run.turn.state = state
+        if state == 'done':
+            self.task_completed.emit(chat.item.text(0))
         if error:
             chat.alert = error[:800]
             chat.failed_turn = run.turn
@@ -2123,6 +2426,8 @@ class WorkspacePane(QWidget):
             self.refresh_alert()
             self.refresh_controls()
             self.render_history()
+            if state == 'done':
+                self.refresh_preview()
 
     def codex_disconnected(self, error):
         self.catalog.clear()

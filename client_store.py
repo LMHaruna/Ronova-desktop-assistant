@@ -26,6 +26,7 @@ class Preferences:
     proactive_calls: bool = False
     desktop_pinned: bool = True
     font_scale: int = 100
+    theme: str = 'light'
 
     def validate(self):
         if self.engine not in ENGINES: raise ValueError('大模型选项无效')
@@ -43,6 +44,7 @@ class Preferences:
         if type(self.start_on_login) is not bool: raise ValueError('开机自动启动配置无效')
         if type(self.desktop_pinned) is not bool: raise ValueError('桌面置顶配置无效')
         if type(self.font_scale) is not int or not 80 <= self.font_scale <= 130: raise ValueError('文字字号配置无效')
+        if self.theme not in ('light', 'dark'): raise ValueError('界面主题配置无效')
         if type(self.proactive_text) is not bool or type(self.proactive_calls) is not bool:
             raise ValueError('主动回应开关无效')
         return self

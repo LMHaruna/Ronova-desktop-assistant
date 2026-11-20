@@ -1,11 +1,13 @@
 # Bundled environments, models, caches and verification artifacts belong in release packages.
 /runtime/
 /dist/
+/Ronova.exe
 /release/
 /releases/
 
 # Local user data and account-specific configuration.
 /data/
+/Extensions/
 /config/client-preferences.json
 /config/client-models.bin*
 /config/realtime-voice.json
@@ -15,6 +17,9 @@
 
 # Original materials and audition/verification output.
 /image-reference/
+/image-inference/
+/推进计划.md
+/工作交接-*.md
 /voice-audition/
 /verification/
 /voice-reference/*.wav

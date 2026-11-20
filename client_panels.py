@@ -22,7 +22,7 @@ from client_scene import PHONE_BODY, PHONE_SCREEN, PHONE_SCREEN_RADIUS, CHAT_PAN
 
 from client_fonts import typography, emphasis_font
 from client_motion import MotionButton
-from client_theme import COLORS, themed
+from client_theme import COLORS, LIGHT_COLORS, recolor_style, themed
 from voice_input import input_devices
 from pcm_player import output_devices
 
@@ -30,7 +30,7 @@ CHAT_BOTTOM_MARGIN = 8
 CHAT_COMPOSER_INSET = 12
 CHAT_COMPOSER_RADIUS = CHAT_PANEL_RADIUS - CHAT_COMPOSER_INSET
 
-PHONE_CSS = themed('''
+PHONE_CSS_LIGHT = themed('''
 QWidget {background:transparent;color:$text;}
 QWidget#phoneSurface {background:transparent;}
 QWidget#chatPage {background:$surface;color:$text;}
@@ -52,10 +52,10 @@ QWidget#settingsPage QWidget#profileCard {background:transparent;}
 QWidget#settingsPage QPushButton {color:$text;}
 QWidget#settingsPage QPushButton#navButton {color:$text;}
 QWidget#settingsPage QPushButton#settingsRow:hover {background:transparent;border-radius:12px;}
-QWidget#settingsPage QPushButton#primaryButton {background:$primary;color:$surface;}
+QWidget#settingsPage QPushButton#primaryButton {background:$primary;color:white;}
 QWidget#settingsPage QPushButton#primaryButton:disabled {background:$border;color:$muted;}
-QWidget#settingsPage QPushButton#primaryButton[codexSignedIn="true"]:disabled {background:$primary;color:$surface;}
-QWidget#settingsPage QPushButton#secondaryButton {background:white;}
+QWidget#settingsPage QPushButton#primaryButton[codexSignedIn="true"]:disabled {background:$primary;color:white;}
+QWidget#settingsPage QPushButton#secondaryButton {background:$surface;}
 QWidget#settingsPage QLabel#noteLabel {color:$muted;font-size:13px;}
 QWidget#settingsPage QSlider::groove:horizontal {background:$border;height:3px;}
 QWidget#settingsPage QSlider::sub-page:horizontal {background:$primary;height:3px;}
@@ -73,9 +73,9 @@ QPushButton#navButton:hover,QPushButton#navButton:pressed,QPushButton#navButton:
 QPushButton#settingsRow:hover {background:transparent;border-radius:12px;}
 QPushButton#actionButton {color:$muted;font-size:12px;padding:6px 2px;}
 QPushButton#actionButton:disabled {color:$disabled;}
-QPushButton#sendButton {background:$primary;color:$surface;border-radius:17px;font-size:23px;}
+QPushButton#sendButton {background:$primary;color:white;border-radius:17px;font-size:23px;}
 QPushButton#sendButton:disabled {background:$border;color:$muted;}
-QPushButton#primaryButton {background:$primary;color:$surface;border-radius:12px;padding:13px;}
+QPushButton#primaryButton {background:$primary;color:white;border-radius:12px;padding:13px;}
 QPushButton#secondaryButton {background:$elevated;border-radius:12px;padding:13px;}
 QLabel#sectionLabel {color:$muted;font-size:12px;padding-left:14px;}
 QLabel#noteLabel {color:$muted;font-size:12px;}
@@ -91,6 +91,12 @@ QSlider::groove:horizontal {height:4px;background:$border;border-radius:2px;}
 QSlider::sub-page:horizontal {background:$primary;border-radius:2px;}
 QSlider::handle:horizontal {background:white;border:0;width:19px;margin:-8px 0;border-radius:9px;}
 ''').replace('COMPOSER_RADIUS', str(CHAT_COMPOSER_RADIUS))
+
+def phone_css():
+    style = recolor_style(PHONE_CSS_LIGHT, LIGHT_COLORS, COLORS)
+    if COLORS['surface'] != LIGHT_COLORS['surface']:
+        style += '\nQWidget#chatPage QWidget#composer {background:#292627;}'
+    return style
 
 COMPACT_CHAT_CSS = '''
 QWidget#chatPage QPlainTextEdit, QWidget#chatPage QLabel#userBubble,
@@ -243,7 +249,7 @@ class FoldoutChevron(Chevron):
 
     def paintEvent(self, event):
         painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor(COLORS['gray']),1.5,Qt.PenStyle.SolidLine,
+        painter.setPen(QPen(QColor(self.property('chevronColor') or COLORS['gray']),1.5,Qt.PenStyle.SolidLine,
                            Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin))
         painter.translate(5,10); painter.rotate(90*self.progress)
         painter.drawPolyline([QPointF(-2,-5),QPointF(2,0),QPointF(-2,5)])
@@ -400,6 +406,37 @@ class Switch(QAbstractButton):
         if self.hasFocus():
             painter.setBrush(Qt.BrushStyle.NoBrush); painter.setPen(QPen(QColor(COLORS['muted']), 1))
             painter.drawRoundedRect(QRectF(1, 1, 40, 23), 11.5, 11.5)
+
+
+class ThemeSwitch(Switch):
+    """The theme thumb can be clicked or dragged between the two choices."""
+    def mousePressEvent(self, event):
+        self._press_x = event.position().x()
+        self._dragging = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            if abs(event.position().x() - self._press_x) >= 5:
+                self._dragging = True
+            if self._dragging:
+                self.animation.stop()
+                self.set_position(max(0.0, min(1.0, (event.position().x() - 12.5) / 17)))
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and (self._dragging or abs(event.position().x() - self._press_x) >= 5):
+            self.setDown(False)
+            checked = event.position().x() >= self.width() / 2
+            if checked == self.isChecked():
+                self.animate(checked)
+            else:
+                self.setChecked(checked)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class FontSizeSlider(QSlider):
@@ -568,7 +605,7 @@ class InlineChoicePicker(QWidget):
     def __init__(self):
         super().__init__(); self._choices=[]; self._index=-1; self.options=[]
         self.setObjectName('ttsEngineInput')
-        self.setStyleSheet(themed('QWidget#ttsEngineInput {background:white;border:1px solid $border;border-radius:10px;}'))
+        self.setStyleSheet(themed('QWidget#ttsEngineInput {background:$surface;border:1px solid $border;border-radius:10px;}'))
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         self.header=SettingsRow('',callback=self.toggle,disclosure=False)
         self.setFocusProxy(self.header)
@@ -955,7 +992,7 @@ class CallOptions(QFrame):
     def __init__(self, pane, plus_size):
         super().__init__(pane)
         self.setObjectName('callOptions')
-        self.setStyleSheet(themed('QFrame#callOptions{background:white;border:1px solid $border;border-radius:16px;}'))
+        self.setStyleSheet(themed('QFrame#callOptions{background:$surface;border:1px solid $border;border-radius:16px;}'))
         self.setFixedSize(188,64)
         self.plus = CallIcon('plus', '展开陪伴选项', plus_size)
         self.voice = CallIcon('voice', '语音通话', 44)
@@ -1174,7 +1211,16 @@ class SettingsPane(QWidget):
         self.font_slider.valueChanged.connect(self.font_size_changed)
         self.font_slider.sliderReleased.connect(lambda:QTimer.singleShot(0, self.save_font_size))
         font_layout.addWidget(self.font_slider)
-        self.add_section(body_layout, '界面', group([font_card]))
+        theme_card = QWidget(); theme_layout = QHBoxLayout(theme_card)
+        theme_layout.setContentsMargins(13, 10, 13, 10)
+        theme_layout.addWidget(QLabel('界面外观')); theme_layout.addStretch()
+        theme_layout.addWidget(QLabel('浅色'))
+        self.theme_switch = ThemeSwitch(self.values.theme == 'dark')
+        self.theme_switch.setAccessibleName('深色界面')
+        self.theme_switch.setToolTip('向左切换浅色，向右切换深色')
+        self.theme_switch.toggled.connect(lambda checked:self.apply_change('theme', 'dark' if checked else 'light'))
+        theme_layout.addWidget(self.theme_switch); theme_layout.addWidget(QLabel('深色'))
+        self.add_section(body_layout, '界面', group([theme_card, font_card]))
         self.proactive_row=SettingsRow('主动回应',icon='mode',callback=self.open_call_settings)
         if not desktop: self.add_section(body_layout,'陪伴',group([self.proactive_row]))
         self.call_page=QWidget(); self.stack.addWidget(self.call_page)
@@ -1265,6 +1311,7 @@ class SettingsPane(QWidget):
             row.setToolTip(row.value.text())
         self.autoplay.sync(prefs.autoplay)
         self.start_on_login.sync(prefs.start_on_login)
+        self.theme_switch.sync(prefs.theme == 'dark')
         if self.desktop_pin: self.desktop_pin.sync(prefs.desktop_pinned)
         self.proactive_text.sync(prefs.proactive_text)
         self.proactive_calls.sync(prefs.proactive_calls)
@@ -1579,7 +1626,7 @@ class SettingsPane(QWidget):
         if self.memory_revision!=self.main.controller.memory.revision:
             from client_memory import STAGES
             profile=self.main.controller.memory.snapshot()
-            self.memory_row.value.setText(STAGES[profile['stage']]+' · '+str(len(profile['memories']))+' 条')
+            self.memory_row.value.setText(STAGES[profile['stage']] + (' · 已保存' if profile['memories'] else ''))
             self.memory_revision=profile['revision']
         if self.device_future and self.device_future.done():
             future=self.device_future; self.device_future=None
@@ -1601,6 +1648,8 @@ class SettingsPane(QWidget):
                         form.api_key.setText(key); form.api_key.setCursorPosition(0)
             self.pending_tts_key = None
             self.values = replace(self.main.controller.preferences); self.refresh_values()
+            if hasattr(self.main, 'apply_theme'):
+                self.main.apply_theme(self.values.theme)
             for save in self.model_save_buttons.values(): save.setEnabled(True)
             self.status_label.setText(('配置已保存' if saved else '保存未完成，请检查输入') if self.pending_model else '')
             self.pending_model = False
@@ -1653,7 +1702,7 @@ class PhoneSurface(QWidget):
         self.setObjectName('phoneSurface'); self.setFixedSize(328,697)
         self.mode='settings'
         self.compact_chat = False
-        self.setStyleSheet(PHONE_CSS)
+        self.setStyleSheet(phone_css())
         layout = QVBoxLayout(self); layout.setContentsMargins(0,49,0,29); layout.setSpacing(0)
         self.pages = AnimatedStack(); layout.addWidget(self.pages)
         self.text = TextPane(main); self.settings = SettingsPane(main)
@@ -1662,7 +1711,7 @@ class PhoneSurface(QWidget):
             self.pages.addWidget(self.settings)
         self.toast = QLabel(self); self.toast.setWordWrap(True)
         self.toast.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.toast.setStyleSheet(themed('background:$text;color:white;border-radius:12px;padding:10px;font-size:13px;'))
+        self.toast.setStyleSheet(themed('background:$primary;color:white;border-radius:12px;padding:10px;font-size:13px;'))
         self.toast.setGeometry(16,88,296,76); self.toast.hide()
         self.toast_timer = QTimer(self); self.toast_timer.setSingleShot(True)
         self.toast_timer.timeout.connect(self.toast.hide)
@@ -1680,7 +1729,7 @@ class PhoneSurface(QWidget):
         radius=CHAT_PANEL_RADIUS if self.mode=='text' else PHONE_SCREEN_RADIUS
         painter.drawRoundedRect(QRectF(self.rect()),radius,radius)
         painter.save(); painter.translate(-PHONE_SCREEN[0],-PHONE_SCREEN[1])
-        self.main.assets.paint_phone_header(painter,light=True)
+        self.main.assets.paint_phone_header(painter,light=COLORS['surface'] == LIGHT_COLORS['surface'])
         if self.mode!='text':
             painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(QColor(COLORS['text']))
             painter.drawRoundedRect(QRectF(927,763,86,4),2,2)
@@ -1732,7 +1781,7 @@ class PhoneOverlay(QGraphicsView):
         compact = self.page == 'text' and min(sx,sy) < .8
         if compact != self.surface.compact_chat:
             self.surface.compact_chat = compact
-            self.surface.setStyleSheet(PHONE_CSS + (COMPACT_CHAT_CSS if compact else ''))
+            self.surface.setStyleSheet(phone_css() + (COMPACT_CHAT_CSS if compact else ''))
         # A QWidget/QRegion mask has only on/off pixels. Composite an alpha
         # mask after rendering the whole page, including child backgrounds.
         dpr=self.devicePixelRatioF()

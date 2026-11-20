@@ -32,11 +32,12 @@ def show_window(window):
 
 
 class WindowDrag(QObject):
-    def __init__(self, handle, target, move=None, *, started=None):
+    def __init__(self, handle, target, move=None, *, started=None, finished=None):
         super().__init__(handle)
         self.target = target
         self.move = move or self.move_window
         self.started = started
+        self.finished = finished
         self.press = None
         self.dragging = False
         handle.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -62,13 +63,30 @@ class WindowDrag(QObject):
                 self.move(self.origin + delta)
                 return True
         elif kind in (QEvent.Type.MouseButtonRelease, QEvent.Type.UngrabMouse, QEvent.Type.Hide):
+            if kind == QEvent.Type.MouseButtonRelease and event.button() != Qt.MouseButton.LeftButton:
+                return False
+            if kind == QEvent.Type.MouseButtonRelease and self.dragging and self.finished is not None:
+                self.move(self.origin + event.globalPosition().toPoint() - self.press)
             self.press = None
             if self.dragging:
                 self.dragging = False
+                if self.finished is not None:
+                    self.finished(kind == QEvent.Type.MouseButtonRelease)
                 if isinstance(handle, QPushButton):
                     handle.setDown(False)
                 return kind == QEvent.Type.MouseButtonRelease
         return False
+
+
+def hardware_rows(reading):
+    def value(number, unit):
+        return '—' if number is None else f'{number:.0f}{unit}'
+    rows=[('CPU', value(reading.cpu_load, '%'), ''),
+          ('GPU', value(reading.gpu_load, '%'), value(reading.gpu_temperature, '°C')),
+          ('内存', value(reading.memory_load, '%'), '')]
+    if reading.game_fps is not None:
+        rows.append(('游戏', value(reading.game_fps, ' FPS'), ''))
+    return rows
 
 
 class AvatarButton(QPushButton):
@@ -165,15 +183,7 @@ class AvatarButton(QPushButton):
     def paint_readings(self, painter):
         reading = self.sampler.reading if self.sampler else HardwareReading()
 
-        def value(number, unit):
-            return '—' if number is None else f'{number:.0f}{unit}'
-
-        rows = (
-            ('CPU', value(reading.cpu_load, '%'), ''),
-            ('GPU', value(reading.gpu_load, '%'), value(reading.gpu_temperature, '°C')),
-            ('内存', value(reading.memory_load, '%'), ''),
-            ('桌面', value(reading.desktop_fps, ' FPS'), ''),
-        )
+        rows = hardware_rows(reading)
         center = self.width() / 2
         top = (self.height() - len(rows) * 22) / 2
         font = self.font()
@@ -219,6 +229,16 @@ class DesktopLauncher(QWidget):
         self.avatar.move(self.center - QPoint(self.AVATAR // 2, self.AVATAR // 2))
         self.avatar.installEventFilter(self)
         self.drag = WindowDrag(self.avatar, self, self.move_avatar)
+        self.task_notice = QLabel('任务已完成', self)
+        self.task_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.task_notice.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.task_notice.setGeometry(48, 13, self.SIZE - 96, 42)
+        self.task_notice.setStyleSheet('background:#eeeeee;color:#343034;'
+                                       'border:1px solid #c9c4c8;border-radius:14px;'
+                                       'padding:6px;font-size:14px;')
+        self.task_notice.hide()
+        self.task_notice_timer = QTimer(self, singleShot=True, interval=8000)
+        self.task_notice_timer.timeout.connect(self.task_notice.hide)
         self.buttons = []
         self.keys = []
         for key, label, callback in actions:
@@ -247,6 +267,11 @@ class DesktopLauncher(QWidget):
 
     def activate(self, action):
         action()
+
+    def show_task_completed(self, _title=''):
+        self.task_notice.show()
+        self.task_notice.raise_()
+        self.task_notice_timer.start()
 
     def set_pinned(self, pinned):
         flag = Qt.WindowType.WindowStaysOnTopHint
@@ -336,9 +361,9 @@ class DesktopLauncher(QWidget):
 
 
 class CloseButton(QPushButton):
-    def __init__(self, parent=None, *, color=COLORS['muted']):
+    def __init__(self, parent=None, *, color=None):
         super().__init__(parent)
-        self.glyph_color = QColor(color)
+        self.glyph_color = QColor(color) if color is not None else None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def paintEvent(self, event):
@@ -348,7 +373,7 @@ class CloseButton(QPushButton):
         size = min(self.width(), self.height())
         reach = size * .15
         painter.translate(QRectF(self.rect()).center())
-        painter.setPen(QPen(self.glyph_color, max(1.4, size * .06), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setPen(QPen(self.glyph_color or QColor(COLORS['muted']), max(1.4, size * .06), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(QLineF(-reach, -reach, reach, reach))
         painter.drawLine(QLineF(-reach, reach, reach, -reach))
 
@@ -369,7 +394,7 @@ class FloatingPanel(QWidget):
         self.corner_radius = PHONE_BODY_RADIUS if inner_corner_radius is None else inset + inner_corner_radius
         layout.setContentsMargins(inset, 13, inset, 19 if inner_corner_radius is None else inset)
         header = QHBoxLayout()
-        name = QLabel(title)
+        name = self.title_label = QLabel(title)
         name.setFont(emphasis_font())
         name.setObjectName('assistantTitle')
         name.setFixedHeight(36)
@@ -438,6 +463,9 @@ class FloatingPanel(QWidget):
             self.resize(min(self.width(), area.width()), min(self.height(), area.height()))
             self.move(constrain(anchor - QPoint(self.width() + 120, self.height() // 2), self.size(), area))
 
+    def panel_rect(self):
+        return self.rect()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -446,7 +474,7 @@ class FloatingPanel(QWidget):
         fill.setColorAt(1,QColor(COLORS['background']))
         painter.setBrush(fill)
         painter.setPen(QPen(QColor(COLORS['gray']),1))
-        rect = QRectF(self.rect()).adjusted(.5,.5,-.5,-.5)
+        rect = QRectF(self.panel_rect()).adjusted(.5,.5,-.5,-.5)
         radius = self.corner_radius-.5
         painter.drawRoundedRect(rect,radius,radius)
 

@@ -5,7 +5,7 @@ import math
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (QColor, QConicalGradient, QFont, QFontMetricsF, QIcon, QKeySequence, QPainter, QPainterPath,
                            QPainterPathStroker, QPen, QPixmap, QShortcut)
-from PySide6.QtWidgets import (QColorDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QColorDialog, QFrame, QGridLayout, QInputDialog, QLabel,
                                QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget, QWidgetAction)
 
 from client_fonts import emphasis_font
@@ -16,7 +16,7 @@ from client_workspace_controls import tool_icon
 
 DEFAULT_COLOR = COLORS['primary']
 SHAPES = {'line': '直线', 'rect': '矩形', 'ellipse': '椭圆'}
-PALETTE = (('白色',COLORS['surface']), ('灰色',COLORS['gray']), ('棕色','#92400E'), ('暗红色',DEFAULT_COLOR),
+PALETTE = (('白色','#FFFFFF'), ('灰色',COLORS['gray']), ('棕色','#92400E'), ('暗红色',DEFAULT_COLOR),
            ('橙色','#F97316'), ('琥珀色','#F59E0B'), ('绿色','#16A34A'), ('青绿色','#0D9488'),
            ('青色','#06B6D4'), ('蓝色','#2563EB'), ('靛蓝色','#4F46E5'), ('紫色','#9333EA'), ('玫红色','#DB2777'))
 
@@ -336,14 +336,17 @@ class MarkupEditor(QWidget):
         self.tools = {}
         self.bar_moved = False
         outer = QVBoxLayout(self); outer.setContentsMargins(12,10,12,10); outer.setSpacing(8)
-        title = QLabel('标记截图'); title.setObjectName('markupTitle')
+        title = self.title = QLabel('标记截图'); title.setObjectName('markupTitle')
         title.setFont(emphasis_font())
         outer.addWidget(title)
         self.view = QScrollArea(); self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.view.setWidget(self.canvas); outer.addWidget(self.view,1)
         self.bar = self.build_bar()
+        toolbar = self.bar.layout()
+        self.bar_widgets = [toolbar.itemAt(index).widget() for index in range(toolbar.count())]
+        self.bar_columns = len(self.bar_widgets)
         self.bar.setFixedSize(self.bar.sizeHint())
-        self.setMinimumWidth(self.bar.width() + 20)
+        self.wide_bar_width = self.bar.width()
         outer.setContentsMargins(12, 10, 12, self.bar.height() + 16)
         for sequence, action in (('Escape',self.cancelled.emit),('Ctrl+Z',self.canvas.undo),
                                  ('Ctrl+Shift+Z',self.canvas.redo),('Ctrl+Y',self.canvas.redo)):
@@ -352,17 +355,20 @@ class MarkupEditor(QWidget):
 
     def build_bar(self):
         bar = QFrame(self); bar.setObjectName('markupTools')
-        tools = QHBoxLayout(bar); tools.setContentsMargins(3,2,3,2); tools.setSpacing(3)
+        tools = QGridLayout(bar); tools.setContentsMargins(3,2,3,2); tools.setSpacing(3)
+
+        def add(control):
+            tools.addWidget(control,0,tools.count(),Qt.AlignmentFlag.AlignCenter)
 
         def button(glyph, label, action=None):
             control = QPushButton()
             control.setFixedSize(34,34); control.setIconSize(QSize(20,20))
             control.setAccessibleName(label); control.setToolTip(label)
             if glyph:
-                color = COLORS['surface'] if glyph == 'done' else COLORS['muted']
+                color = '#FFFFFF' if glyph == 'done' else COLORS['muted']
                 control.setIcon(tool_icon(TOOL_GLYPHS[glyph], color))
             if action: control.clicked.connect(action)
-            tools.addWidget(control)
+            add(control)
             return control
 
         def mode(name, label):
@@ -372,7 +378,7 @@ class MarkupEditor(QWidget):
 
         def divider():
             line = QWidget(); line.setObjectName('markupDivider'); line.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
-            line.setFixedSize(1,20); tools.addWidget(line)
+            line.setFixedSize(1,20); add(line)
 
         grip = button('grip','拖动标记工具栏'); grip.setFixedWidth(22)
         grip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -399,7 +405,7 @@ class MarkupEditor(QWidget):
         self.redo_button = button('redo','重做',self.canvas.redo)
         divider()
         button('close','关闭标记并放弃修改',self.cancelled.emit)
-        done = button('done','完成',lambda: self.accepted.emit(self.canvas.marks))
+        done = self.done_button = button('done','完成',lambda: self.accepted.emit(self.canvas.marks))
         done.setObjectName('markupDone')
         return bar
 
@@ -466,7 +472,11 @@ class MarkupEditor(QWidget):
             mark = Mark('text', (point,), self.canvas.color, text.strip())
             self.canvas.commit((*self.canvas.marks, mark))
 
-    def open(self, image, marks):
+    def open(self, image, marks, *, preview=False):
+        self.title.setText('标记预览图' if preview else '标记截图')
+        done_text = '完成并加入聊天' if preview else '完成'
+        self.done_button.setAccessibleName(done_text)
+        self.done_button.setToolTip(done_text)
         self.canvas.load(image,marks)
         self.select_tool('pen')
         self.bar_moved = False
@@ -493,8 +503,23 @@ class MarkupEditor(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.reflow_bar()
         self.place_bar()
         self.fit()
+
+    def reflow_bar(self):
+        columns = len(self.bar_widgets) if self.width()-8 >= self.wide_bar_width else max(1,(self.width()-11)//37)
+        if columns == self.bar_columns:
+            return
+        self.bar_columns = columns
+        toolbar = self.bar.layout()
+        for widget in self.bar_widgets:
+            toolbar.removeWidget(widget)
+        for index,widget in enumerate(self.bar_widgets):
+            row,column = divmod(index,columns)
+            toolbar.addWidget(widget,row,column,Qt.AlignmentFlag.AlignCenter)
+        self.bar.setFixedSize(self.bar.sizeHint())
+        self.layout().setContentsMargins(12,10,12,self.bar.height()+16)
 
     def place_bar(self):
         position = self.bar.pos() if self.bar_moved else QPoint(

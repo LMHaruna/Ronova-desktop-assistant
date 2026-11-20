@@ -1,6 +1,8 @@
 """Local Codex App Server connection and ChatGPT browser sign-in."""
 import json
 from pathlib import Path
+import platform
+import re
 import shutil
 import sys
 
@@ -10,9 +12,28 @@ from PySide6.QtGui import QDesktopServices
 
 def codex_executable():
     executable = shutil.which('codex.exe' if sys.platform == 'win32' else 'codex')
-    if executable or sys.platform != 'win32':
+    if sys.platform != 'win32':
         return executable
-    local = QProcessEnvironment.systemEnvironment().value('LOCALAPPDATA')
+    environment = QProcessEnvironment.systemEnvironment()
+    windows_apps = Path(environment.value('ProgramFiles', r'C:\Program Files')) / 'WindowsApps'
+    # PATH can still point to the previous desktop package after an update.
+    if executable and windows_apps not in Path(executable).parents:
+        return executable
+    candidates = []
+    architecture = 'arm64' if platform.machine().lower() == 'arm64' else 'x64'
+    try:
+        for package in windows_apps.glob(f'OpenAI.Codex_*_{architecture}__2p2nqsd0c76g0'):
+            match = re.fullmatch(r'OpenAI\.Codex_(\d+(?:\.\d+){3})_.*', package.name, re.I)
+            binary = package / 'app/resources/codex.exe'
+            if match and binary.is_file():
+                candidates.append((tuple(map(int, match[1].split('.'))), binary))
+    except OSError:
+        pass
+    if candidates:
+        return str(max(candidates, key=lambda entry: entry[0])[1])
+    if executable:
+        return executable
+    local = environment.value('LOCALAPPDATA')
     if local:
         bundled = Path(local) / 'OpenAI' / 'Codex' / 'bin'
         try:

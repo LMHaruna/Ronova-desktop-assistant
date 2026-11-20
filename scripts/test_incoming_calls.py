@@ -244,6 +244,37 @@ class IncomingTests(IncomingBase):
         self.assertEqual(self.controller.records()[-1]['assistant'],TEXT['message'])
         self.assertEqual(self.voice.replayed,[])
         self.assertEqual(self.controller.call.starts,[])
+
+    def test_proactive_text_does_not_repeat_the_ordinary_reply(self):
+        self.enable(text=True,calls=False)
+        self.planner.result=dict(TEXT,message='凡人! 先坐下休息！')
+        self.controller.submit('刚才的项目终于忙完了').result(3)
+        self.assertTrue(self.controller.pipeline.wait_finished(3))
+        self.tick(6); self.finish_decision()
+        self.assertEqual(self.planner.calls,1)
+        self.assertEqual([row['source'] for row in self.controller.records()],['text'])
+        self.assertEqual(self.voice.replayed,[])
+        self.assertEqual(self.calls.store.topics(),[])
+
+    def test_reworded_proactive_text_is_filtered_even_with_a_new_topic_label(self):
+        self.enable(text=True,calls=False)
+        message='明天你可以先按我们之前定好的顺序检查提交材料。'
+        self.controller.store.add_proactive_text('previous','qwen',message)
+        self.planner.result=dict(TEXT,message='明天你可以先按我们之前定下的顺序检查提交材料！')
+        self.offer(); self.tick(6); self.finish_decision()
+        self.assertEqual([row['assistant'] for row in self.controller.records()],[message])
+        self.assertEqual(self.voice.replayed,[])
+
+    def test_call_does_not_repeat_an_excerpt_of_the_ordinary_reply(self):
+        self.enable()
+        opening='明天你可以先按我们之前定好的顺序检查提交材料。'
+        self.controller.store.begin('prior','qwen','怎么提交材料？')
+        self.controller.store.update('prior','凡人。'+opening+'最后确认签名。','completed')
+        self.planner.result=dict(PROPOSAL,opening=opening)
+        self.offer(); self.tick(6); self.finish_decision()
+        self.assertIsNone(self.calls.snapshot())
+        self.ringtone.start.assert_not_called()
+
     def test_disabled_channel_is_never_delivered(self):
         self.offer(); self.tick(6)
         self.assertIsNone(self.calls.future)

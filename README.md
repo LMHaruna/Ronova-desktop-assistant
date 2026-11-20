@@ -1,96 +1,91 @@
-# 若娜瓦桌面助手 · Ronova AI Companion
+# Ronova-desktop-assistant
 
-Ronova 是一个以若娜瓦为角色的 Windows 桌面助手，提供文字聊天、语音与 Live2D 视频通话，也可以用来整理桌面、标注截图和通过 Codex 处理项目。启动后，鼠标悬停在桌面头像上即可展开功能入口。点击头像可短暂查看 CPU、GPU、内存和桌面合成帧率。
+若娜瓦桌面助手是一个面向 Windows 的个人桌面应用。桌面头像提供陪伴聊天、Codex 工作区、截图、桌面整理和设置入口。鼠标悬停可展开菜单，左键点击头像可短暂查看 CPU 占用率、GPU 占用率及温度、系统内存占用。符合采集条件时也会显示游戏帧率。
 
-[下载 Windows 运行包](https://github.com/LMHaruna/Ronova-desktop-assistant/releases) · [快速开始](#快速开始) · [维护与打包](#维护与打包)
+[下载 Windows 运行包](https://github.com/LMHaruna/Ronova-desktop-assistant/releases) · [快速开始](#快速开始) · [从源码维护](#从源码维护)
 
-### 桌面入口
-
-![桌面头像和环绕的功能入口](docs/screenshots/desktop-launcher.png)
-
-### 陪伴手机
-
-![若娜瓦陪伴手机文字聊天界面](docs/screenshots/companion-chat.png)
-
-### 设置
-
-![设置窗口中的启动、置顶和音频选项](docs/screenshots/settings.png)
-
-界面图片使用演示数据和示例文件拍摄。
-
-## 陪伴与通话
-
-- **文字与语音聊天**：输入文字或用麦克风说话。可以重播回复，在通话中打断、静音或挂断。手机输入框发送键左侧的「＋」可打开语音通话、视频通话和誓约入口。
-- **Live2D 视频通话**：视频窗口显示若娜瓦的 Live2D 形象，语音沿用选定的麦克风和播放设备。挂断后回到文字聊天，保留输入草稿。
-- **角色知识与记忆**：本地知识库检索相关角色背景，作为陪伴回复的参考。可在「设置 → 记忆与关系」管理长期记忆和好感度。好感度达到 100 后可开启誓约，完成后可从同一入口重温。
-- **主动文字与来电**：在「设置 → 主动回应」分别开启，两项默认关闭。开启后会额外调用模型。来电响铃时保持麦克风关闭，接听后才开始收音。
-
-## 若娜瓦加班区
-
-加班区通过本机 Codex 的 App Server 工作。首次使用时，在「设置 → 大模型」的 Codex 区域登录 ChatGPT。可以选择项目目录、按项目管理聊天，并选择 Codex 模型、推理强度和命令审批方式。工作区发送你提交的文字和选中的截图，陪伴聊天的角色设定与记忆留在陪伴系统。
-
-![若娜瓦加班区的项目列表、计划回复与输入区](docs/screenshots/codex-workspace.png)
-
-- 输入框左下角的「＋」可压缩当前聊天的上下文，或切换计划模式。计划模式下 Codex 可以检查项目、提问并拟定方案，项目文件以只读方式访问。
-- 可以用麦克风把问题转写到输入框，确认后再发送。完成的回复可点击语音图标朗读。
-- 左侧可查看自行添加到项目 `Extensions/MCP` 和 `Extensions/Skills` 的扩展。
-
-## 截图与桌面整理
-
-从桌面头像或加班区打开「截图」，拖动框选。按空格保留当前选区并继续选下一张，按 Enter 确认。双击加班区的截图缩略图可用画笔、文字或形状标注，点底部的「✓」保存，再随消息一起发送。
-
-![截图标注界面，示例使用圆形和文字标注](docs/screenshots/screenshot-markup.png)
-
-「桌面整理」用分区收纳现有的 Windows 桌面图标。可以拖动标题移动分区、拖动边缘调整大小，或在框内滚动浏览。图标支持排序、跨框移动和移回桌面空白处，也可拖到回收站或 Windows 支持接收文件的应用图标。退出整理后恢复原生桌面图标视图。
-
-![桌面整理的本机配置、工作和工具分区](docs/screenshots/desktop-organizer.png)
+![若娜瓦桌面头像和功能入口](docs/screenshots/desktop-launcher.png)
 
 ## 快速开始
 
-1. 在 64 位 Windows 上，从 [v0.2.0 发布页](https://github.com/LMHaruna/Ronova-desktop-assistant/releases/tag/v0.2.0)下载 `Ronova-0.2.0-Windows-x64-Offline.zip.001` 至 `.006` 共六个分卷，以及 `Join-Ronova-Parts.ps1`，放到同一个文件夹。GitHub 自动生成的 Source code 压缩包不包含运行环境和模型。
-2. 在该文件夹打开 PowerShell，执行下方命令。脚本会校验各分卷及合并后的 ZIP；校验成功后解压生成的 ZIP。下载、合并、解压和创建运行环境建议预留至少 **45 GiB** 空间。
+### v0.2.1 在线安装
+
+v0.2.1 发布后，在同一版本的 Releases 页面下载 `Ronova-Setup.exe`，双击选择安装目录。安装器会自动下载该版本的资源分卷、验证 SHA-256，再解压并配置随包的 Python 环境。下载中断后可重新使用同一安装目录续传。资源分卷由安装器读取，无需手动逐卷下载。[v0.2.1 发布页](https://github.com/LMHaruna/Ronova-desktop-assistant/releases/tag/v0.2.1)
+
+### 已发布的 v0.2.0
+
+1. 从发布页下载 `Ronova-0.2.0-Windows-x64-Offline.zip.001` 至 `.006` 和 `Join-Ronova-Parts.ps1`，放在同一目录。下载、合并、解压和准备环境建议预留至少 **45 GiB**。[GitHub v0.2.0 发布页](https://github.com/LMHaruna/Ronova-desktop-assistant/releases/tag/v0.2.0)
+2. 在下载目录打开 PowerShell，执行下面的命令。校验成功后解压合并得到的 ZIP。
 
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\Join-Ronova-Parts.ps1
    ```
 
-3. 在解压后的文件夹中双击 `安装.cmd`，完成后双击 `Start-Client.cmd` 启动。运行包自带 **Windows x64 CPython 3.11.17** 和离线依赖，无需另装 Python；也可直接运行 `Start-Client.cmd`，首次启动时会自动安装依赖。
-4. 打开「设置 → 大模型」，为陪伴聊天配置所选模型的 API Key。使用加班区时，另需本机可用的 Codex 客户端或 CLI，并在同一页登录 ChatGPT。
+3. 按 v0.2.0 发布包说明运行 `安装.cmd` 和 `Start-Client.cmd`。运行包含 Windows x64 CPython 3.11.17、离线依赖和模型，使用者无需另装 Python。GitHub 自动生成的源码压缩包只提供源码及仓库文件。
+4. 陪伴聊天在「设置 → 大模型」配置自己的服务商 API Key。Codex 工作区使用本机已安装的 Codex 客户端或 CLI，并在同一页的 Codex 区域登录 ChatGPT。
 
-### 模型、语音与设备
+当前开发源码使用 `Ronova.exe` 启动，首次运行时会用随包 Python 创建项目内环境。下面介绍当前源码的功能，已发布的 v0.2.0 可能采用较早的操作方式。
 
-| 功能 | 所需条件 |
+## 陪伴系统
+
+- **聊天与通话** · 支持文字和麦克风输入、重播回复、语音通话及静态立绘通话。接听来电后才启用麦克风。文字模型与语音引擎可按设置组合。
+- **长期记忆** · 自动提炼有效记忆，在设置中汇总为一段文字。可以用自然语言更正或删除记忆。关系、好感度与誓约在陪伴系统中管理。
+- **主动回应** · 主动文字和主动来电可分别启用，默认为关闭。主动回应会结合近期对话，跳过已说过的内容。开启自动播放时可朗读主动文字。
+
+![陪伴系统演示对话](docs/screenshots/companion-chat.png)
+
+| 功能 | 使用条件 |
 | --- | --- |
-| 陪伴对话 | 联网和所选服务商的 API Key。客户端提供千问实时、DeepSeek 及兼容的文字模型配置。调用可能按服务商规则计费。 |
-| 语音回复 | 千问实时模式直接接收云端语音。支持单独选择声音的文字模型可用本地 IndexTTS-2.5 或云端千问 TTS Next，云端音色需要账号权限。 |
-| 本地语音合成 | IndexTTS-2.5 可用 NVIDIA CUDA 加速，显存以 8 GB 或以上作为参考。实际速度随硬件和所选模型变化。 |
-| 语音输入与通话 | 麦克风和扬声器或耳机。中文语音识别在本机运行，使用前可在设置中选择输入、输出设备。 |
+| 陪伴对话 | 联网及所选服务商的 API Key。模型调用和记忆整理可能产生费用。 |
+| 实时语音 | 千问实时 Plus 和 Flash 使用各自的服务配置。使用复刻音色需要账号有对应模型的音色权限。 |
+| 文字模型的语音回复 | 可按支持情况选用本地 IndexTTS-2.5 或云端千问 TTS Next。本地合成可使用 NVIDIA CUDA 加速。 |
+| 语音输入 | 麦克风和输出设备。客户端的中文语音识别在本机运行。 |
 
-运行包包含语音模型、界面素材和离线依赖。缺少 Visual C++ 运行库时，可查看包内的 `runtime/prerequisites`。
+## Codex 工作区
 
-## 维护与打包
+在「若娜瓦加班区」选择项目目录和对话，可设置模型、推理强度、计划模式及命令审批方式。Codex 请求选择或补充信息时会弹出输入框。任务执行状态显示在回复下方，成功完成时桌面头像会提示。
 
-双击 `维护工具.cmd`，可以修复 Python 环境、运行回归测试、检查运行环境。解压后的目录有 `package-manifest.json` 时，还可以在安装依赖前校验发布包。修复环境前请先从系统托盘退出 Ronova。
+- 将标题栏拖到屏幕右侧，可先查看吸附轮廓，松手后窗口占当前屏幕可用宽度的四分之一。点击侧边黑条收起或展开，向左拖动标题栏可恢复浮动窗口。
+- 若本轮生成了预览图，下方预览会自动展开。点击回复中的本地图片预览链接也可打开对应图像。双击预览图可标记并将副本加入待发送附件。
+- 支持麦克风转写、回复朗读、截图附件和上下文压缩。用户提交的工作区内容发给 Codex，陪伴记忆由本机的陪伴系统独立管理。
+- 可在工作区查看自行添加的本机扩展，MCP 和 Skills 分别放在项目的 `Extensions/MCP` 和 `Extensions/Skills`。
+
+![加班区的浮动工作区示例](docs/screenshots/codex-workspace.png)
+
+## 截图与桌面整理
+
+区域截图支持多选区，按空格保留选区并继续选择，按 Enter 确认。双击截图附件可使用画笔、文字、形状和橡皮标记，完成后图片会加入聊天草稿。
+
+![工作区截图标记工具](docs/screenshots/screenshot-markup.png)
+
+「桌面整理」在 Windows 桌面上创建可移动和调整大小的分区。可对原生桌面图标排序、跨分区拖动或移回桌面，退出桌面整理后恢复原生图标视图。
+
+![使用演示文件的桌面整理分区](docs/screenshots/desktop-organizer.png)
+
+## 设置与本机数据
+
+可从设置调整开机启动、头像置顶、设备、字体和主题。关闭窗口后客户端仍可在托盘运行，从托盘选择「退出」可结束程序。
+
+项目内的 `data/` 保存陪伴聊天、记忆、来电与桌面整理配置。模型密钥由 Windows 用户级加密存储管理。分享源码或构建发布包时应使用示例配置，个人数据和本机扩展适合单独备份。
+
+![桌面助手设置界面](docs/screenshots/settings.png)
+
+## 从源码维护
+
+已有完整运行时的开发目录可通过 `维护工具.cmd` 检查环境或运行回归测试。修复依赖前先从系统托盘退出客户端。
 
 ```powershell
 .\维护工具.cmd verify-runtime --quick
 .\维护工具.cmd test
 ```
 
-开机自动启动、头像置顶和文字字号可在设置中调整。关闭窗口后程序仍驻留托盘，从托盘选择「退出」可停止客户端。如需移除，先关闭开机自动启动并退出程序，再删除项目目录。本机保存的模型密钥可单独从 `%LOCALAPPDATA%\Ronova` 清理 `client-models.bin`。
-
-在包含模型、素材、基础 Python 和离线依赖的开发目录中，可生成 Windows 发布目录及校验清单，再压缩为发布包。发布目录包含 `runtime/python`，首次启动时会为目标电脑创建虚拟环境。
+准备好模型、内置 Python、离线依赖和 PresentMon 后，可构建 Windows 离线发布目录。脚本按清单收集文件、构建启动 EXE 并写入校验清单。发布目录和压缩分卷通过 GitHub Releases 分发。
 
 ```powershell
+.\scripts\run-python.cmd .\scripts\download_presentmon.py
 .\scripts\run-python.cmd .\scripts\build_desktop_package.py .\dist\Ronova-Windows-x64-Offline
 ```
 
-制作在线安装器时，将已校验的单文件 ZIP 上传到支持大文件的 HTTPS 下载服务，再用直链生成 EXE。
+帧率显示依赖 Intel PresentMon。在识别到可采集的游戏时才显示游戏 FPS。部分 Windows 配置需要相应的性能日志权限。第三方组件、字体和语音模型适用其各自的许可。[第三方组件许可与声明](THIRD_PARTY_NOTICES.md)
 
-```powershell
-.\scripts\run-python.cmd .\scripts\build_online_installer.py .\dist\Ronova-0.2.0-Windows-x64-Offline.zip .\dist\Ronova-Setup.exe --url 'https://downloads.example.com/ronova/0.2.0/Ronova-Windows-x64-Offline.zip'
-```
-
-省略 `--url` 可构建手动填写链接的测试版。安装器会校验 ZIP 的大小和 SHA-256。发布新版本时，把新 ZIP 上传到新的版本化地址，再用新地址构建并上传 EXE。保留旧地址可以让旧安装器继续使用。已安装的客户端仍通过用户主动下载新版更新。
-
-这是个人兴趣项目，目前仍在开发。随包字体、语音组件与模型的许可见 [第三方组件许可与声明](THIRD_PARTY_NOTICES.md)。
+如需构建在线安装 EXE，可先将校验过的离线 ZIP 放到稳定的 HTTPS 直链，再用 `scripts/build_online_installer.py` 生成安装器。v0.2.0 的正式分发方式为 GitHub Releases 分卷。
