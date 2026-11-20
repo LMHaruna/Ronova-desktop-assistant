@@ -10,21 +10,9 @@
 
 ### v0.2.1 在线安装
 
-v0.2.1 发布后，在同一版本的 Releases 页面下载 `Ronova-Setup.exe`，双击选择安装目录。安装器会自动下载该版本的资源分卷、验证 SHA-256，再解压并配置随包的 Python 环境。下载中断后可重新使用同一安装目录续传。资源分卷由安装器读取，无需手动逐卷下载。[v0.2.1 发布页](https://github.com/LMHaruna/Ronova-desktop-assistant/releases/tag/v0.2.1)
-
-### 已发布的 v0.2.0
-
-1. 从发布页下载 `Ronova-0.2.0-Windows-x64-Offline.zip.001` 至 `.006` 和 `Join-Ronova-Parts.ps1`，放在同一目录。下载、合并、解压和准备环境建议预留至少 **45 GiB**。[GitHub v0.2.0 发布页](https://github.com/LMHaruna/Ronova-desktop-assistant/releases/tag/v0.2.0)
-2. 在下载目录打开 PowerShell，执行下面的命令。校验成功后解压合并得到的 ZIP。
-
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Join-Ronova-Parts.ps1
-   ```
-
-3. 按 v0.2.0 发布包说明运行 `安装.cmd` 和 `Start-Client.cmd`。运行包含 Windows x64 CPython 3.11.17、离线依赖和模型，使用者无需另装 Python。GitHub 自动生成的源码压缩包只提供源码及仓库文件。
-4. 陪伴聊天在「设置 → 大模型」配置自己的服务商 API Key。Codex 工作区使用本机已安装的 Codex 客户端或 CLI，并在同一页的 Codex 区域登录 ChatGPT。
-
-当前开发源码使用 `Ronova.exe` 启动，首次运行时会用随包 Python 创建项目内环境。下面介绍当前源码的功能，已发布的 v0.2.0 可能采用较早的操作方式。
+1. 在 Windows x64 上下载并双击 `Ronova-Setup.exe`，选择空目录安装。建议预留至少 **45 GiB**。[下载安装器](https://github.com/LMHaruna/Ronova-desktop-assistant/releases/download/v0.2.1/Ronova-Setup.exe)
+2. 安装器会自动下载和校验资源分卷，解压并配置随包的 Python 环境。下载中断后，使用同一安装目录重试可续传。
+3. 安装完成后运行 `Ronova.exe`。陪伴聊天在「设置 → 大模型」配置服务商 API Key。Codex 工作区使用本机已安装的 Codex 客户端或 CLI，并在同一页的 Codex 区域登录 ChatGPT。
 
 ## 陪伴系统
 
@@ -88,4 +76,4 @@ v0.2.1 发布后，在同一版本的 Releases 页面下载 `Ronova-Setup.exe`�
 
 帧率显示依赖 Intel PresentMon。在识别到可采集的游戏时才显示游戏 FPS。部分 Windows 配置需要相应的性能日志权限。第三方组件、字体和语音模型适用其各自的许可。[第三方组件许可与声明](THIRD_PARTY_NOTICES.md)
 
-如需构建在线安装 EXE，可先将校验过的离线 ZIP 放到稳定的 HTTPS 直链，再用 `scripts/build_online_installer.py` 生成安装器。v0.2.0 的正式分发方式为 GitHub Releases 分卷。
+如需构建在线安装器，可将离线发布目录打成 ZIP，再用 `scripts/build_online_installer.py` 的 `--github-repo` 选项生成 EXE、资源分卷和校验清单。
